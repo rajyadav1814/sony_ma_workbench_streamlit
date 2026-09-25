@@ -344,13 +344,19 @@ _step2_navigation_requested = (
     params.get("wb_step") == "2"
     and not _catalog_build_requested
 )
+_step_navigation_requested = (
+    params.get("wb_step") in {str(step) for step in range(MIN_STEP, MAX_STEP + 1)}
+    and not _catalog_build_requested
+)
 _login_transition_requested = st.session_state.get("_login_transition", False)
 _catalog_build_loader = st.empty()
-if _catalog_build_requested or _step2_navigation_requested or _login_transition_requested:
+if _catalog_build_requested or _step_navigation_requested or _login_transition_requested:
     if _catalog_build_requested:
         _loader_title = "Building catalog…"
-    elif _step2_navigation_requested:
+    elif _step_navigation_requested and params.get("wb_step") == "2":
         _loader_title = "Loading matching catalogues…"
+    elif _step_navigation_requested:
+        _loader_title = f"Loading Step {params.get('wb_step')}…"
     else:
         _loader_title = "Loading workbench…"
     _catalog_build_loader.markdown(
@@ -623,8 +629,6 @@ html_full = "\n".join(html_parts)
 html_full = html_full.replace('src="sonymusic.png"', f'src="{_logo_data_uri()}"')
 
 components.html(html_full, height=900, scrolling=True)
-if _catalog_build_requested or _step2_navigation_requested or _login_transition_requested:
-    _catalog_build_loader.empty()
 if _login_transition_requested:
     st.session_state.pop("_login_transition", None)
 
