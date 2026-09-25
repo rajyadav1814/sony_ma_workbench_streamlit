@@ -120,7 +120,7 @@ st.markdown(
         opacity: 0 !important;
     }
 
-    /* Keep a visible handoff while the workbench iframe is rebuilt. */
+    /* Keep a stable handoff visible while Streamlit rebuilds the iframe. */
     [data-testid="stComponentLoading"] {
         display: flex !important;
         visibility: visible !important;
@@ -354,9 +354,9 @@ if _catalog_build_requested or _step_navigation_requested or _login_transition_r
     if _catalog_build_requested:
         _loader_title = "Building catalog…"
     elif _step_navigation_requested and params.get("wb_step") == "2":
-        _loader_title = "Loading matching catalogues…"
+        _loader_title = "Processing matching catalogues…"
     elif _step_navigation_requested:
-        _loader_title = f"Loading Step {params.get('wb_step')}…"
+        _loader_title = f"Processing…"
     else:
         _loader_title = "Loading workbench…"
     _catalog_build_loader.markdown(
@@ -374,15 +374,27 @@ if _catalog_build_requested or _step_navigation_requested or _login_transition_r
 # ─── Load all data & compute (wrapped in spinner for loading feedback) ────────
 # Most functions use @st.cache_data so subsequent reloads are fast (cache hit).
 with st.container():
-    try:
-        injected_data = load_data_from_postgres(conn)
-    except Exception:
-        injected_data = {"albums": [], "ambiguity_matches": {}, "tracks": [], "track_album_bridge": [],
-                         "consumption_matrix": [], "growth_trend": [], "release_year_analysis": [],
-                         "new_release_tracks": [], "catalog_options": {"artists": [], "labels": []},
-                         "territories": {"countries": ["United States", "Mexico", "Colombia"],
-                                         "regions": {"Latin America": ["Mexico", "Colombia"],
-                                                     "North America": ["United States"]}}}
+    _requested_step = clamp_step(int(params.get("wb_step", "1") or "1"))
+    _needs_full_data = _requested_step >= 3 or params.get("wb_step2_created") == "1"
+    if _needs_full_data:
+        try:
+            injected_data = load_data_from_postgres(conn)
+        except Exception:
+            injected_data = {"albums": [], "ambiguity_matches": {}, "tracks": [], "track_album_bridge": [],
+                             "consumption_matrix": [], "growth_trend": [], "release_year_analysis": [],
+                             "new_release_tracks": [], "catalog_options": {"artists": [], "labels": []},
+                             "territories": {"countries": ["United States", "Mexico", "Colombia"],
+                                             "regions": {"Latin America": ["Mexico", "Colombia"],
+                                                         "North America": ["United States"]}}}
+    else:
+        injected_data = {
+            "albums": [], "ambiguity_matches": {}, "tracks": [], "track_album_bridge": [],
+            "consumption_matrix": [], "growth_trend": [], "release_year_analysis": [],
+            "new_release_tracks": [], "catalog_options": {"artists": [], "labels": []},
+            "territories": {"countries": ["United States", "Mexico", "Colombia"],
+                            "regions": {"Latin America": ["Mexico", "Colombia"],
+                                        "North America": ["United States"]}},
+        }
 
     # Cache the latest live matches in the active Streamlit session. The Step 1
     # → Step 2 navigation reloads the host, so this guarantees the rows remain

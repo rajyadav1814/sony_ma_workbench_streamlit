@@ -1864,7 +1864,6 @@
         return `
       <div class="pipeline-overlay">
         <div class="pipeline-card">
-          <div class="pipeline-spinner" role="status" aria-label="Building catalog"></div>
           <div class="pipeline-title">Building Catalog Table</div>
           <div class="pipeline-subtitle">Creating table with selected artists, labels, and ISRC codes.<br>This process typically takes a minutes.</div>
           <div class="progress-label">Progress</div>
@@ -2125,7 +2124,7 @@
           completedSteps: Array.from(state.completedSteps)
         }));
         window.parent.history.replaceState(null, '', url.toString());
-        showNavigationLoader('Loading Step ' + state.screen + '...');
+        showNavigationLoader('Processing...');
         if (requestWorkbenchRerun()) return;
         return;
       } catch(e) {
