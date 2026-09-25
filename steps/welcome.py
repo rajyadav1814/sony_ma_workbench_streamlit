@@ -74,17 +74,24 @@ def render_welcome_screen(session):
                 font-weight: 600 !important;
             }
             [data-testid="stTextInput"] input {
+                display: block !important;
+                box-sizing: border-box !important;
+                width: 100% !important;
+                min-height: 44px !important;
+                appearance: none !important;
                 color: #1a1a2e !important;
                 background: #ffffff !important;
-                border: 2px solid #d1d5db !important;
-                border-radius: 12px !important;
-                padding: 14px 16px !important;
-                font-size: 16px !important;
-                height: auto !important;
+                border: 1px solid #9ca3af !important;
+                border-radius: 6px !important;
+                padding: 10px 12px !important;
+                font: 400 16px/1.4 Inter, Arial, sans-serif !important;
+                height: 44px !important;
+                outline: none !important;
+                box-shadow: inset 0 1px 2px rgba(0,0,0,0.06) !important;
             }
             [data-testid="stTextInput"] input:focus {
                 border-color: #3b5de7 !important;
-                box-shadow: 0 0 0 3px rgba(59,93,231,0.1) !important;
+                box-shadow: 0 0 0 3px rgba(59,93,231,0.14) !important;
             }
             [data-testid="stTextInput"] input::placeholder {
                 color: #9ca3af !important;
@@ -332,12 +339,28 @@ def render_resume_screen(session):
 
             /* Session card — top half; the button row closes the shape */
             .resume-session-card {
-                background: #f9fafb;
-                border-radius: 16px 16px 0 0;
+                background: transparent;
+                border-radius: 0;
                 padding: 18px 20px 14px;
-                border: 2px solid #e5e7eb;
-                border-bottom: none;
+                border: 0;
                 margin-bottom: 0;
+            }
+            [data-testid="stVerticalBlockBorderWrapper"]:has(.catalog-card-marker),
+            .st-emotion-cache-1fpp8sd:has(.catalog-card-marker) {
+                display: flex !important;
+                gap: 1rem !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                height: auto !important;
+                min-width: 1rem !important;
+                flex-flow: column !important;
+                flex: 1 1 0% !important;
+                align-items: flex-start !important;
+                justify-content: flex-start !important;
+                border: 5px solid rgb(215 69 69 / 20%) !important;
+                border-radius: 3.5rem !important;
+                padding: calc(1rem - 1px) !important;
+                overflow: visible !important;
             }
             .resume-session-header {
                 display: flex;
@@ -465,15 +488,12 @@ def render_resume_screen(session):
                 padding: 0 20px !important;
             }
 
-            /* Button row joined to the bottom of the card so the two read as one
-               surface. Scoped by the .rs-btnrow sentinel so the topbar row (also a
-               horizontal block, also containing a button) is never restyled. */
+            /* Resume actions form the upper section of the catalogue card. */
             [data-testid="stHorizontalBlock"]:has(.rs-btnrow) {
-                background: #f9fafb;
-                border: 2px solid #e5e7eb;
-                border-top: none;
-                border-radius: 0 0 16px 16px;
-                padding: 0 16px 14px;
+                background: transparent;
+                border: 0;
+                border-radius: 0;
+                padding: 0 16px;
                 margin-top: 0 !important;
                 align-items: center !important;
             }
@@ -551,13 +571,13 @@ def render_resume_screen(session):
 
     st.markdown("<hr style='border:none;border-top:1.5px solid #141210;margin:0 0 20px 0;'>", unsafe_allow_html=True)
 
-    # ─── Heading with Start new button beside it ───────────────────────────────
+    # ─── Heading with Start new action on the right ────────────────────────────
     _n = len(sessions_list)
     _subtitle = (
         f"You have {_n} catalogues in progress" if _n > 1
         else "Pick up where you left off or start fresh"
     )
-    heading_col, btn_col = st.columns([4, 1], gap="small")
+    heading_col, start_col = st.columns([4, 1], gap="small")
     with heading_col:
         st.markdown(
             f"""<div class="resume-heading">
@@ -566,7 +586,7 @@ def render_resume_screen(session):
             </div>""",
             unsafe_allow_html=True,
         )
-    with btn_col:
+    with start_col:
         st.markdown("<div style='padding-top: 18px;'></div>", unsafe_allow_html=True)
         _marker("startnew")
         if st.button("Start new", use_container_width=True, key="start_new_btn"):
@@ -603,11 +623,14 @@ def render_resume_screen(session):
         else:
             updated_label = "Date unavailable"
         sid = pending["session_id"]
+        catalog_card = st.container(border=True)
+        catalog_card.markdown('<span class="catalog-card-marker" style="display:none"></span>', unsafe_allow_html=True)
 
-        # Session card: header + progress + pills as a single contiguous block
-        st.markdown(
-            f"""
-            <div class="resume-session-card">
+        # Keep the catalogue identity and actions on one compact card row.
+        info_col, btn_a, btn_b, btn_c = catalog_card.columns([3, 1, 1, 1], gap="small")
+        with info_col:
+            st.markdown(
+                f"""
                 <div class="resume-session-header">
                     <div class="resume-session-avatar">{initials}</div>
                     <div class="resume-session-info">
@@ -616,24 +639,11 @@ def render_resume_screen(session):
                         <div class="updated">Last updated: {updated_label}</div>
                     </div>
                 </div>
-                <div class="resume-progress-summary">
-                    <span>Overall progress</span>
-                    <span>{current_step} of {MAX_STEP} steps</span>
-                </div>
-                <div class="resume-progress-pills">
-                    {_pills_html(current_step)}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        # Action buttons, right-aligned in a row joined to the card's lower edge
-        _spacer, btn_a, btn_b, btn_c = st.columns([3, 1, 1, 1], gap="small")
-        with _spacer:
-            # Sentinel that scopes the card styling to this row only
-            st.markdown('<span class="rs-btnrow" style="display:none"></span>', unsafe_allow_html=True)
+                """,
+                unsafe_allow_html=True,
+            )
         with btn_a:
+            st.markdown('<span class="rs-btnrow" style="display:none"></span>', unsafe_allow_html=True)
             _marker("continue")
             if st.button("Continue", use_container_width=True, key=f"resume_continue_{sid}"):
                 st.session_state["welcomed"] = True
@@ -670,6 +680,22 @@ def render_resume_screen(session):
                 st.session_state.pop("_force_resume", None)
                 st.rerun()
 
+        # Progress remains beneath the compact identity/action row.
+        catalog_card.markdown(
+            f"""
+            <div class="resume-session-card">
+                <div class="resume-progress-summary">
+                    <span>Overall progress</span>
+                    <span>{current_step} of {MAX_STEP} steps</span>
+                </div>
+                <div class="resume-progress-pills">{_pills_html(current_step)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         # Gap between stacked session cards
         st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+
 
