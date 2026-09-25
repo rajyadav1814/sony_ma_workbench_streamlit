@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script src="streamlit-component-lib.js"></script>
+</head>
+<body>
+<script>
+(function() {
+  var currentStep = null;
+  var channel = new BroadcastChannel("wb_step_sync");
+
+  channel.onmessage = function(event) {
+    var data = event.data;
+    if (data && data.type === "step_change" && data.step !== currentStep) {
+      currentStep = data.step;
+      Streamlit.setComponentValue({
+        step: data.step,
+        visited: data.visited || [],
+        completed: data.completed || []
+      });
+    }
+  };
+
+  Streamlit.setFrameHeight(0);
+  Streamlit.setComponentReady();
+})();
+</script>
+</body>
+</html>

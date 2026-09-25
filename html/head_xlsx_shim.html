@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sony Music | M&A Catalog Valuation Workbench</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+  // Minimal inline XLSX shim — generates Excel-compatible XML Spreadsheet 2003
+  // No external CDN dependency required (works inside Streamlit iframe sandbox)
+  var XLSX = (function() {
+    function escXml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function sheetToXml(name, data) {
+      if (!data || !data.length) return '';
+      var cols = Object.keys(data[0]);
+      var xml = '<Worksheet ss:Name="' + escXml(name) + '"><Table>';
+      xml += '<Row>' + cols.map(function(c){return '<Cell><Data ss:Type="String">' + escXml(c) + '</Data></Cell>';}).join('') + '</Row>';
+      data.forEach(function(row){
+        xml += '<Row>' + cols.map(function(c){
+          var v = row[c];
+          var t = (typeof v === 'number' && isFinite(v)) ? 'Number' : 'String';
+          return '<Cell><Data ss:Type="' + t + '">' + escXml(v == null ? '' : v) + '</Data></Cell>';
+        }).join('') + '</Row>';
+      });
+      xml += '</Table></Worksheet>';
+      return xml;
+    }
+    return {
+      utils: {
+        book_new: function() { return { sheets: [], names: [] }; },
+        json_to_sheet: function(data) { return data; },
+        book_append_sheet: function(wb, data, name) { wb.sheets.push(data); wb.names.push(name); }
+      },
+      writeFile: function(wb, fname) {
+        var xml = '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>';
+        xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">';
+        for (var i = 0; i < wb.sheets.length; i++) {
+          xml += sheetToXml(wb.names[i], wb.sheets[i]);
+        }
+        xml += '</Workbook>';
+        var dataUri = 'data:application/vnd.ms-excel;base64,' + btoa(unescape(encodeURIComponent(xml)));
+        var a = document.createElement('a');
+        a.href = dataUri;
+        a.download = fname.replace(/\.xlsx$/, '.xls');
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    };
+  })();
+  </script>

@@ -1,0 +1,3105 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sony Music | M&A Catalog Valuation Workbench</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+  // Minimal inline XLSX shim — generates Excel-compatible XML Spreadsheet 2003
+  // No external CDN dependency required (works inside Streamlit iframe sandbox)
+  var XLSX = (function() {
+    function escXml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function sheetToXml(name, data) {
+      if (!data || !data.length) return '';
+      var cols = Object.keys(data[0]);
+      var xml = '<Worksheet ss:Name="' + escXml(name) + '"><Table>';
+      xml += '<Row>' + cols.map(function(c){return '<Cell><Data ss:Type="String">' + escXml(c) + '</Data></Cell>';}).join('') + '</Row>';
+      data.forEach(function(row){
+        xml += '<Row>' + cols.map(function(c){
+          var v = row[c];
+          var t = (typeof v === 'number' && isFinite(v)) ? 'Number' : 'String';
+          return '<Cell><Data ss:Type="' + t + '">' + escXml(v == null ? '' : v) + '</Data></Cell>';
+        }).join('') + '</Row>';
+      });
+      xml += '</Table></Worksheet>';
+      return xml;
+    }
+    return {
+      utils: {
+        book_new: function() { return { sheets: [], names: [] }; },
+        json_to_sheet: function(data) { return data; },
+        book_append_sheet: function(wb, data, name) { wb.sheets.push(data); wb.names.push(name); }
+      },
+      writeFile: function(wb, fname) {
+        var xml = '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>';
+        xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">';
+        for (var i = 0; i < wb.sheets.length; i++) {
+          xml += sheetToXml(wb.names[i], wb.sheets[i]);
+        }
+        xml += '</Workbook>';
+        var dataUri = 'data:application/vnd.ms-excel;base64,' + btoa(unescape(encodeURIComponent(xml)));
+        var a = document.createElement('a');
+        a.href = dataUri;
+        a.download = fname.replace(/\.xlsx$/, '.xls');
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    };
+  })();
+  </script>
+  <style>
+    /* ============================================================
+   SONY MUSIC — M&A CATALOG VALUATION WORKBENCH
+   Vanilla HTML / CSS / JS build — no frameworks, no Streamlit
+   ============================================================ */
+
+    :root {
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-serif: var(--font-sans);
+      --font-mono: var(--font-sans);
+
+      --accent: #E1261C;
+      --accent-2: #B81E16;
+      --accent-soft: rgba(225, 38, 28, 0.10);
+      --green: #1E9E5A;
+      --green-soft: rgba(30, 158, 90, 0.10);
+      --gold: #B9861F;
+      --gold-soft: rgba(185, 134, 31, 0.12);
+      --blue: #2A63C7;
+      --blue-soft: rgba(42, 99, 199, 0.10);
+      --purple: #6B4FCE;
+      --purple-soft: rgba(107, 79, 206, 0.10);
+      --teal: #1B8A82;
+      --teal-soft: rgba(27, 138, 130, 0.10);
+
+      --radius-s: 8px;
+      --radius-m: 14px;
+      --radius-l: 20px;
+    }
+
+    html[data-theme="light"] {
+      color-scheme: light;
+      --bg: #F1EFE7;
+      --bg-radial: rgba(225, 38, 28, 0.05);
+      --surface: #FFFFFF;
+      --surface-2: #FAF9F4;
+      --surface-hover: #FFFFFF;
+      --border: rgba(20, 18, 14, 0.11);
+      --border-strong: rgba(20, 18, 14, 0.20);
+      --text: #141210;
+      --text-dim: #5A564C;
+      --text-mute: #8F8A7E;
+      --shadow: 0 10px 30px rgba(20, 18, 14, 0.08);
+      --track-bg: #DAD7CC;
+      --chip-bg: rgba(20, 18, 14, 0.045);
+      --scrollbar: rgba(20, 18, 14, 0.32);
+      --accent-contrast: #FFFFFF;
+    }
+
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0A0A0A;
+      --bg-radial: rgba(225, 38, 28, 0.09);
+      --surface: #141414;
+      --surface-2: #1A1A1A;
+      --surface-hover: #1D1D1D;
+      --border: rgba(255, 255, 255, 0.09);
+      --border-strong: rgba(255, 255, 255, 0.16);
+      --text: #F1EFEA;
+      --text-dim: #A8A49C;
+      --text-mute: #6E6B64;
+      --shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+      --track-bg: #2A2A2A;
+      --chip-bg: rgba(255, 255, 255, 0.05);
+      --scrollbar: rgba(255, 255, 255, 0.18);
+      --accent-contrast: #FFFFFF;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+    }
+
+    html {
+      height: 100%;
+      overflow-y: auto;
+    }
+
+    body {
+      background:
+        radial-gradient(ellipse 80% 36% at 50% -8%, var(--bg-radial) 0%, transparent 62%),
+        var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      min-height: 100%;
+      overflow-y: auto;
+      overflow-x: hidden;
+      transition: background .35s ease, color .35s ease;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--scrollbar);
+      border-radius: 10px;
+    }
+
+    .app {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 24px 52px 70px;
+    }
+
+    /* ---------- HEADER ---------- */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 18px;
+      border-bottom: 1.5px solid var(--text);
+    }
+
+    .topbar-center {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      flex: 1;
+      margin: 0 20px;
+    }
+
+    .topbar-title {
+      font-family: var(--font-sans);
+      font-weight: 800;
+      font-size: 1.8rem;
+      letter-spacing: -0.015em;
+      color: #c51616cf;
+      margin-bottom: 0px;
+      line-height: 1.1;
+    }
+
+    .topbar-title em {
+      font-style: normal;
+      font-weight: 700;
+      color: inherit;
+    }
+
+    .topbar-desc {
+      font-family: var(--font-sans);
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      line-height: 1.5;
+      max-width: 925px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      grid-template-rows: repeat(5, 1fr);
+      gap: 2px;
+    }
+
+    .brand-mark span {
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: .85;
+    }
+
+    .brand-mark span:nth-child(3n) {
+      opacity: .45;
+    }
+
+    .brand-mark span:nth-child(7),
+    .brand-mark span:nth-child(13),
+    .brand-mark span:nth-child(19) {
+      opacity: 1;
+    }
+
+    .brand-text {
+      line-height: 1.2;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .brand-name {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: .8rem;
+      letter-spacing: .22em;
+      color: var(--text);
+      padding-bottom: 5px;
+      border-bottom: 1px solid var(--border-strong);
+      margin-bottom: 4px;
+    }
+
+    .brand-sub {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: .72rem;
+      letter-spacing: .22em;
+      color: var(--text);
+    }
+
+    .theme-toggle {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
+      font-family: var(--font-mono);
+      font-size: .66rem;
+      color: var(--text-dim);
+      letter-spacing: .08em;
+    }
+
+    .toggle-track {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      border-radius: 20px;
+      background: var(--track-bg);
+      border: 1px solid var(--border-strong);
+      transition: .25s;
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      transition: .25s cubic-bezier(.4, 0, .2, 1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    html[data-theme="light"] .toggle-thumb {
+      transform: translateX(20px);
+    }
+
+    /* ---------- META ROW ---------- */
+    .entity-chip {
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2px 10px;
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    /* ---------- HEADLINE ---------- */
+    .headline {
+      font-family: var(--font-sans);
+      font-weight: 700;
+      font-style: normal;
+      font-size: clamp(1.9rem, 3.4vw, 2.6rem);
+      line-height: 1.08;
+      letter-spacing: -0.015em;
+      margin: 12px 0 8px;
+      color: var(--text);
+    }
+
+    .headline em {
+      font-style: normal;
+      font-weight: 700;
+      color: var(--text-dim);
+    }
+
+    .sub-headline {
+      font-family: var(--font-sans);
+      color: var(--text-dim);
+      font-size: .95rem;
+      line-height: 1.6;
+      margin: 0 0 6px;
+      max-width: 1300px;
+    }
+
+    /* ---------- TAB BAR ---------- */
+    .tabbar {
+      display: flex;
+      flex-wrap: nowrap;
+      align-items: center;
+      gap: 5px;
+      margin-bottom: 26px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      padding-top: 20px;
+      white-space: nowrap;
+    }
+
+    .tabbar::-webkit-scrollbar {
+      height: 6px;
+    }
+
+    .tabbar::-webkit-scrollbar-thumb {
+      background: rgba(20, 18, 14, 0.15);
+      border-radius: 999px;
+    }
+
+    .tab-pill {
+      font-family: var(--font-mono);
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .05em;
+      padding: 6px 8px;
+      border-radius: 20px;
+      border: 1.5px solid var(--text-dim);
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all .18s ease;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .tab-pill:hover {
+      transform: translateY(-1px);
+    }
+
+    .tab-pill .badge {
+      background: var(--text-dim);
+      color: #fff;
+      border-radius: 8px;
+      padding: 1px 6px;
+      font-size: .64rem;
+    }
+
+    .tab-pill.active {
+      background: var(--pill-c, var(--accent));
+      color: #fff;
+      border-color: var(--pill-c, var(--accent));
+      box-shadow: 0 6px 16px -4px var(--pill-c, var(--accent));
+    }
+
+    .tab-pill.active .badge {
+      background: rgba(255, 255, 255, 0.28);
+      color: #fff;
+    }
+
+    .tab-pill.completed {
+      border-color: #22c55e;
+      color: #22c55e;
+    }
+    .tab-pill.completed .check-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #22c55e;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .tab-pill.active.completed {
+      border-color: var(--pill-c, var(--accent));
+      color: #fff;
+    }
+    .tab-pill.active.completed .check-icon {
+      background: rgba(255,255,255,0.35);
+    }
+
+    /* ---------- SECTION ---------- */
+    .section-block {
+      margin: 26px 0 0;
+    }
+
+    .section-title {
+      font-family: var(--font-serif);
+      font-weight: 800;
+      font-size: 1.5rem;
+      letter-spacing: -0.01em;
+      padding-left: 16px;
+      position: relative;
+      margin-bottom: 10px;
+      margin-top: 50px;
+    }
+
+    .section-title::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 4px;
+      bottom: 4px;
+      width: 4px;
+      border-radius: 3px;
+      background: linear-gradient(180deg, var(--accent), var(--accent-2));
+    }
+
+      .section-caption {
+        width: 100%;
+        display: block;
+        text-align: center !important;
+        margin: 0 auto 4px auto !important;
+        padding: 0 !important;
+        font-family: var(--font-serif);
+        font-size: 0.8rem;
+        font-weight: 200;
+        color: var(--text-main);
+        letter-spacing: -0.01em;
+    }
+
+    .step-meta {
+      font-family: var(--font-mono);
+      font-size: .68rem;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      row-gap: 6px;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+
+    .step-meta .prog {
+      font-family: var(--font-mono);
+      color: var(--text-mute);
+      font-weight: 500;
+      letter-spacing: .05em;
+      white-space: nowrap;
+    }
+
+    /* ---------- GRID / CARDS ---------- */
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .grid-4 {
+      grid-template-columns: repeat(4, 1fr);
+    }
+
+    @media(max-width:900px) {
+      .grid-4 {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .grid-3 {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .app {
+        padding: 18px 24px 50px;
+      }
+
+      .topbar {
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .topbar-center {
+        order: 3;
+        flex-basis: 100%;
+        margin: 8px 0 0;
+      }
+
+      .topbar-title {
+        font-size: 1.4rem;
+      }
+
+      .tabbar {
+        gap: 6px;
+        padding-top: 20px;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        margin-left: -24px;
+        margin-right: -24px;
+        padding-left: 24px;
+        padding-right: 24px;
+      }
+
+      .tabbar::-webkit-scrollbar {
+        display: none;
+      }
+
+      .kpi-value {
+        font-size: 1.5rem;
+      }
+
+      .section-title {
+        font-size: 1.25rem;
+        margin-top: 32px;
+      }
+
+      .headline {
+        font-size: 1.6rem;
+      }
+    }
+
+    @media(max-width:620px) {
+
+      .grid-2,
+      .grid-3,
+      .grid-4 {
+        grid-template-columns: 1fr;
+      }
+
+      .app {
+        padding: 14px 14px 40px;
+      }
+
+      .topbar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        padding-bottom: 14px;
+      }
+
+      .topbar-center {
+        align-items: flex-start;
+        text-align: left;
+      }
+
+      .topbar-title {
+        font-size: 1.15rem;
+      }
+
+      .topbar-desc {
+        font-size: 0.75rem;
+      }
+
+      .brand-name {
+        font-size: .7rem;
+      }
+
+      .brand-sub {
+        font-size: .62rem;
+      }
+
+      .tabbar {
+        gap: 5px;
+        padding-top: 16px;
+        margin-left: -14px;
+        margin-right: -14px;
+        padding-left: 14px;
+        padding-right: 14px;
+      }
+
+      .tab-pill {
+        font-size: .62rem;
+        padding: 5px 7px;
+      }
+
+      .headline {
+        font-size: 1.3rem;
+        margin: 8px 0 6px;
+      }
+
+      .sub-headline {
+        font-size: .82rem;
+      }
+
+      .section-title {
+        font-size: 1.1rem;
+        margin-top: 24px;
+        padding-left: 12px;
+      }
+
+      .kpi-value {
+        font-size: 1.3rem;
+      }
+
+      .kpi-label {
+        font-size: .6rem;
+      }
+
+      .card {
+        padding: 14px 14px;
+      }
+
+      .row-card {
+        padding: 12px 14px;
+        gap: 10px;
+      }
+
+      .btn {
+        font-size: .72rem;
+        padding: 10px 16px;
+        width: 100%;
+        text-align: center;
+      }
+
+      .radio-opt {
+        font-size: .7rem;
+        padding: 7px 12px;
+      }
+
+      .check-chip {
+        font-size: .66rem;
+        padding: 5px 10px;
+      }
+
+      .step-meta {
+        font-size: .6rem;
+      }
+
+      select,
+      input[type="text"],
+      input[type="number"] {
+        font-size: .82rem;
+        padding: 9px 10px;
+      }
+
+      .field-label {
+        font-size: .62rem;
+      }
+
+      thead th {
+        font-size: .58rem;
+        padding: 9px 10px;
+      }
+
+      tbody td {
+        font-size: .76rem;
+        padding: 9px 10px;
+      }
+
+      .topbar-desc {
+        display: none;
+      }
+
+      .nav-row {
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .nav-row .btn {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .nav-row .spacer {
+        display: none;
+      }
+
+      .chart-box {
+        padding: 12px 10px 6px;
+        overflow-x: auto;
+      }
+    }
+
+    /* Enable horizontal scroll on tables for small screens */
+    @media(max-width:768px) {
+      .table-wrap {
+        overflow: visible;
+      }
+
+      .table-scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      table {
+        min-width: 600px;
+      }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-m);
+      padding: 18px 20px;
+      position: relative;
+      overflow: hidden;
+      transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border-strong), transparent);
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(225, 38, 28, 0.35);
+      box-shadow: var(--shadow);
+    }
+
+    .kpi-label {
+      font-family: var(--font-mono);
+      color: var(--text-mute);
+      font-size: .66rem;
+      font-weight: 700;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .kpi-value {
+      font-family: var(--font-serif);
+      font-weight: 800;
+      font-size: 1.9rem;
+      line-height: 1.05;
+      letter-spacing: -0.01em;
+    }
+
+    .kpi-delta {
+      font-family: var(--font-mono);
+      font-size: .74rem;
+      font-weight: 700;
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .kpi-delta.pos {
+      color: var(--green);
+    }
+
+    .kpi-delta.neg {
+      color: var(--accent);
+    }
+
+    .card-body-text {
+      font-size: .83rem;
+      color: var(--text-dim);
+      margin-top: 8px;
+      line-height: 1.5;
+    }
+
+    /* numbered story-style row card (used for lists) */
+    .row-card {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-m);
+      background: var(--surface);
+      margin-bottom: 10px;
+      transition: .2s;
+    }
+
+    .row-card:hover {
+      border-color: rgba(225, 38, 28, 0.3);
+      box-shadow: var(--shadow);
+    }
+
+    .row-num {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      color: var(--text-mute);
+      font-size: .9rem;
+      padding-top: 2px;
+      width: 20px;
+      flex: 0 0 20px;
+    }
+
+    .row-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .row-title {
+      font-family: var(--font-serif);
+      font-weight: 700;
+      font-size: 1.05rem;
+      margin: 4px 0 4px;
+    }
+
+    .row-sub {
+      font-family: var(--font-mono);
+      font-size: .68rem;
+      color: var(--text-mute);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    /* ---------- TAGS / PILLS ---------- */
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: .62rem;
+      font-weight: 800;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    .tag-red {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: 1px solid rgba(225, 38, 28, 0.3);
+    }
+
+    .tag-green {
+      background: var(--green-soft);
+      color: var(--green);
+      border: 1px solid rgba(30, 158, 90, 0.3);
+    }
+
+    .tag-gold {
+      background: var(--gold-soft);
+      color: var(--gold);
+      border: 1px solid rgba(185, 134, 31, 0.3);
+    }
+
+    .tag-blue {
+      background: var(--blue-soft);
+      color: var(--blue);
+      border: 1px solid rgba(42, 99, 199, 0.3);
+    }
+
+    .tag-grey {
+      background: var(--chip-bg);
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+    }
+
+    /* ---------- FORM CONTROLS ---------- */
+    .field {
+      margin-bottom: 16px;
+    }
+
+    .field-label {
+      font-family: var(--font-mono);
+      font-size: .68rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    /* ---------- CUSTOM AUTOCOMPLETE ---------- */
+    .autocomplete-wrap {
+      position: relative;
+      width: 100%;
+    }
+
+    .autocomplete-wrap input {
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .autocomplete-list {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      z-index: 9999;
+      background: var(--surface);
+      border: 1.5px solid var(--accent);
+      border-radius: var(--radius-m);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.14);
+      max-height: 260px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+    }
+
+    .autocomplete-list.open {
+      display: block;
+    }
+
+    .autocomplete-item {
+      font-family: var(--font-sans);
+      font-size: 0.92rem;
+      color: var(--text);
+      padding: 11px 16px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s, color 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .autocomplete-item:last-child {
+      border-bottom: none;
+    }
+
+    .autocomplete-item:hover,
+    .autocomplete-item.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .autocomplete-item .ac-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .autocomplete-item strong {
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .ac-no-result {
+      font-family: var(--font-sans);
+      font-size: 0.88rem;
+      color: var(--text-mute);
+      padding: 14px 16px;
+      text-align: center;
+    }
+
+
+    select,
+    input[type="text"],
+    input[type="number"],
+    input[type="file"] {
+      color-scheme: inherit;
+      font-family: var(--font-sans);
+      font-size: .9rem;
+      background: var(--surface);
+      color: var(--text);
+      border: 2.5px solid var(--border-strong);
+      border-radius: var(--radius-s);
+      padding: 10px 12px;
+      width: 100%;
+      transition: .2s;
+    }
+
+    select {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23999999%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 10px;
+      padding-right: 32px;
+      cursor: pointer;
+    }
+
+    select:focus,
+    input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(225, 38, 28, 0.12);
+    }
+
+    .radio-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .radio-opt {
+      font-family: var(--font-mono);
+      font-size: .78rem;
+      font-weight: 600;
+      padding: 9px 16px;
+      border-radius: 20px;
+      border: 1.5px solid var(--border-strong);
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: .18s;
+      user-select: none;
+    }
+
+    .radio-opt.sel {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .check-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .check-chip {
+      font-family: var(--font-mono);
+      font-size: .74rem;
+      font-weight: 600;
+      padding: 7px 13px;
+      border-radius: 16px;
+      border: 1.5px solid var(--border-strong);
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: .18s;
+      user-select: none;
+    }
+
+    .check-chip.sel {
+      background: var(--blue-soft);
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    .btn {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: .8rem;
+      letter-spacing: .04em;
+      padding: 11px 22px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff;
+      box-shadow: 0 6px 18px rgba(225, 38, 28, 0.28);
+      transition: .2s;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 22px rgba(225, 38, 28, 0.4);
+    }
+
+    .btn.secondary {
+      background: var(--surface);
+      color: var(--text);
+      border: 1.5px solid var(--border-strong);
+      box-shadow: none;
+    }
+
+    .btn.secondary:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .btn:disabled {
+      opacity: .35;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .slider-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 5px;
+      border-radius: 6px;
+      background: var(--track-bg);
+      outline: none;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(225, 38, 28, 0.4);
+      border: 2px solid var(--surface);
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      border: 2px solid var(--surface);
+    }
+
+    .slider-value {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      color: var(--accent);
+      font-size: .95rem;
+    }
+
+    /* ---------- TABLE ---------- */
+    .table-wrap {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-m);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      margin-top: 15px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-sans);
+      font-size: .83rem;
+    }
+
+    thead th {
+      font-family: var(--font-mono);
+      font-size: .64rem;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+      color: var(--text-mute);
+      text-align: left;
+      padding: 12px 16px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+    }
+
+    tbody td {
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    tbody tr:hover {
+      background: var(--surface-2);
+    }
+
+    tbody td.num {
+      font-family: var(--font-mono);
+      color: var(--text);
+      text-align: right;
+    }
+
+    tbody td.strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .table-scroll {
+      max-height: 420px;
+      overflow-y: auto;
+      overflow-x: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--accent) transparent;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .table-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    .table-scroll::-webkit-scrollbar-thumb {
+      background: var(--scrollbar);
+      border-radius: 999px;
+    }
+
+    .table-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    input[type="checkbox"].row-check {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    /* ---------- INFO / SUCCESS BOX ---------- */
+    .notice {
+      font-family: var(--font-sans);
+      font-size: .85rem;
+      padding: 14px 16px;
+      border-radius: var(--radius-s);
+      border: 1px solid var(--border);
+      margin: 12px 0;
+      line-height: 1.55;
+    }
+
+    .notice.info {
+      background: var(--blue-soft);
+      border-color: rgba(42, 99, 199, 0.28);
+      color: var(--text);
+    }
+
+    .notice.success {
+      background: var(--green-soft);
+      border-color: rgba(30, 158, 90, 0.3);
+      color: var(--text);
+    }
+
+    /* ---------- CHART CONTAINER ---------- */
+    .chart-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-m);
+      padding: 18px 18px 8px;
+    }
+
+    .chart-box svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      overflow: visible;
+    }
+
+    .axis-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      fill: var(--text-mute);
+    }
+
+    .grid-line {
+      stroke: var(--border);
+      stroke-width: 1;
+    }
+
+    .bar-value {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      fill: var(--text-dim);
+    }
+
+    /* ---------- SUB TABS (inner tabs like Audio/Video) ---------- */
+    .subtabs {
+      display: flex;
+      gap: 4px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-top: 15px;
+      padding: 4px;
+      margin-bottom: 16px;
+      width: fit-content;
+      flex-wrap: wrap;
+    }
+
+    .subtab {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: .76rem;
+      padding: 8px 16px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: .18s;
+    }
+
+    .subtab.active {
+      background: var(--surface);
+      color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(225, 38, 28, 0.2);
+    }
+
+    /* ---------- NAV BUTTONS ---------- */
+    .nav-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 34px 0 10px;
+      gap: 12px;
+      padding: 16px 0;
+    }
+
+    .nav-row .spacer {
+      flex: 1;
+      text-align: center;
+      font-family: var(--font-mono);
+      font-size: .68rem;
+      color: var(--text-mute);
+      letter-spacing: .1em;
+    }
+    .nav-row .section-title {
+      display: inline-block;
+      margin-top: 0;
+      margin-bottom: 0;
+      padding-left: 0;
+    }
+    .nav-row .section-title::before {
+      display: none;
+    }
+    .nav-row .section-caption {
+      margin-top: 0;
+      text-align: center;
+      padding-left: 0;
+    }
+    .nav-row .step-meta {
+      margin-bottom: 4px;
+    }
+
+    /* ---------- FOOTER ---------- */
+    .footer {
+      margin-top: 50px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: .68rem;
+      color: var(--text-mute);
+      text-align: center;
+      letter-spacing: .03em;
+    }
+
+    /* ---------- TOAST ---------- */
+    .toast {
+      position: fixed;
+      bottom: 26px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--text);
+      color: var(--bg);
+      font-family: var(--font-mono);
+      font-size: .8rem;
+      font-weight: 600;
+      padding: 12px 22px;
+      border-radius: 30px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      opacity: 0;
+      pointer-events: none;
+      transition: .3s ease;
+      z-index: 999;
+      letter-spacing: .03em;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ---------- MISC ---------- */
+    .flex-between {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .hint {
+      font-family: var(--font-mono);
+      font-size: .7rem;
+      color: var(--text-mute);
+      margin-top: 6px;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 22px 0;
+    }
+
+    .upload-box {
+      border: 2.5px dashed var(--border-strong);
+      border-radius: var(--radius-m);
+      padding: 26px;
+      text-align: center;
+      font-family: var(--font-mono);
+      font-size: .78rem;
+      color: var(--text-mute);
+      cursor: pointer;
+      transition: .2s;
+    }
+
+    .upload-box:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* ---------- PIPELINE PROGRESS ---------- */
+    .pipeline-overlay {
+      padding: 48px 32px;
+      text-align: center;
+    }
+    .pipeline-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-m);
+      padding: 40px 48px;
+      max-width: 600px;
+      margin: 0 auto;
+      box-shadow: var(--shadow);
+    }
+    .pipeline-icon {
+      font-size: 2.5rem;
+      margin-bottom: 16px;
+    }
+    .pipeline-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+    .pipeline-subtitle {
+      font-size: 0.9rem;
+      color: var(--text-dim);
+      margin-bottom: 24px;
+    }
+    .progress-bar-wrap {
+      background: var(--track-bg);
+      border-radius: 10px;
+      height: 14px;
+      overflow: hidden;
+      margin-bottom: 12px;
+      position: relative;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 10px;
+      background: linear-gradient(90deg, var(--accent) 0%, #ff6b5e 100%);
+      transition: width 0.6s ease;
+      position: relative;
+    }
+    .progress-bar-fill.animated::after {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+      animation: shimmer 1.8s infinite;
+    }
+    @keyframes shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+    .progress-label {
+      font-size: 0.85rem;
+      color: var(--text-mute);
+      margin-bottom: 4px;
+    }
+    .progress-pct {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 20px;
+    }
+    .pipeline-elapsed {
+      font-size: 0.82rem;
+      color: var(--text-mute);
+      margin-top: 8px;
+    }
+    .pipeline-error {
+      background: rgba(225, 38, 28, 0.06);
+      border: 1px solid rgba(225, 38, 28, 0.25);
+      border-radius: var(--radius-s);
+      padding: 20px 24px;
+      margin-top: 20px;
+      text-align: left;
+    }
+    .pipeline-error-title {
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 6px;
+      font-size: 0.95rem;
+    }
+    .pipeline-error-msg {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      margin-bottom: 14px;
+      font-family: monospace;
+      word-break: break-all;
+    }
+    .pipeline-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+    .btn-retry {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 10px 22px;
+      border-radius: var(--radius-s);
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .btn-retry:hover { background: var(--accent-2); }
+    .btn-support {
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid var(--border-strong);
+      padding: 10px 22px;
+      border-radius: var(--radius-s);
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .btn-support:hover { border-color: var(--accent); color: var(--accent); }
+    .pipeline-success-badge {
+      display: inline-block;
+      background: var(--green-soft);
+      color: var(--green);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app" id="app">
+
+    <header class="topbar">
+      <div class="brand">
+        <img src="sonymusic.png" alt="Sony Music" height="42" style="max-width:100%;height:auto;max-height:42px;">
+        <div class="brand-text">
+          <div class="brand-name">SONY MUSIC</div>
+          <div class="brand-sub">LATIN</div>
+        </div>
+      </div>
+      <div class="topbar-center">
+        <div class="topbar-title">M&amp;A CATALOG VALUATION PLATFORM</div>
+        <div class="topbar-desc">An intelligent solution that identifies music catalogues, resolves artist and catalogue
+          ambiguities, maps ownership and distribution territories, and generates decision-ready valuation insights.
+        </div>
+      </div>
+      <button class="theme-toggle" id="themeToggle">
+        <span id="themeLabel">LIGHT</span>
+        <span class="toggle-track"><span class="toggle-thumb" id="toggleThumb"></span></span>
+      </button>
+    </header>
+
+    <nav class="tabbar" id="tabbar"></nav>
+    <div id="topNav" class="nav-row" style="margin-top:8px;"></div>
+
+    <main id="screenRoot"></main>
+
+    <footer class="footer">SONY MUSIC LATIN &middot; M&amp;A CATALOG VALUATION PLATFORM &mdash; ALL DATA ILLUSTRATIVE
+    </footer>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    /* ============================================================
+       DATA (converted from /data/*.json)
+       ============================================================ */
+    const DATA = window.__INJECTED_DATA__ || {};
+  </script>
+  <script>
+    /* ============================================================
+       SONY MUSIC — M&A CATALOG VALUATION WORKBENCH
+       App logic (vanilla JS, no frameworks)
+       ============================================================ */
+
+    const SCREENS = [
+      { n: 1, key: "catalog", label: "CATALOG SELECT", color: "var(--accent)" },
+      { n: 2, key: "metadata", label: "RESOLVE AMBIGUITY", color: "var(--accent)" },
+      { n: 3, key: "metainc", label: "METADATA TO INCLUDE", color: "var(--accent)" },
+      { n: 4, key: "territory", label: "TERRITORY MAP", color: "var(--accent)" },
+      { n: 5, key: "analytics", label: "CATALOG ANALYTICS", color: "var(--accent)" },
+      { n: 6, key: "revenue", label: "REVENUE & PPD", color: "var(--accent)" },
+      { n: 7, key: "albums", label: "ALBUM ANALYSIS", color: "var(--accent)" },
+      { n: 8, key: "export", label: "CORPORATE EXPORT", color: "var(--accent)" },
+    ];
+
+    const state = {
+      screen: 1,
+      completedSteps: new Set(),
+      theme: "light",
+      searchMode: "Artist",
+      searchTerm: "",
+      resolvedEntities: [],
+      metadataSearch: "",
+      screen3YearFilter: "All",
+      includedAlbums: null,
+      territoryMode: "Country selection",
+      region: Object.keys(DATA.territories.regions)[0],
+      localTerritories: ["Mexico", "United States", "Colombia"],
+      excludedFlags: ["Duplicate", "Outlier", "Incomplete Data"],
+      projTracks: 10,
+      expectedGrowth: 8.0,
+      expectedDecay: -6.0,
+      albumFilter: "All",
+      albumYearFilter: "All",
+      analyticsTab: 0,
+      revenueTab: 0,
+      screen6FromYear: "",
+      screen6ToYear: "",
+      uploadedFile: null,
+      // Pipeline job state
+      pipeline: {
+        status: "idle", // idle | running | completed | failed
+        progress: 0,    // 0-100
+        startedAt: null,
+        estimatedMinutes: 1,
+        errorMessage: null,
+        retryCount: 0,
+        maxRetries: 2,
+        failedStep: null, // which step failed
+      },
+    };
+
+    function initIncludedAlbums() {
+      if (state.includedAlbums) return;
+      const m = {};
+      DATA.albums.forEach(a => {
+        m[a.album_id] = true;
+      });
+      state.includedAlbums = m;
+    }
+    initIncludedAlbums();
+
+    /* ---------------- helpers ---------------- */
+    const $ = sel => document.querySelector(sel);
+    const $$ = sel => Array.from(document.querySelectorAll(sel));
+    const fmtUSD = v => { const m = Number(v) / 1000000; return "$" + m.toLocaleString("en-US", { maximumFractionDigits: 1 }) + "M"; };
+    const fmtUSD4 = v => "$" + Number(v).toFixed(4);
+    const fmtNum = v => Number(v).toLocaleString("en-US");
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+    function toast(msg) {
+      const t = $("#toast");
+      t.textContent = msg;
+      t.classList.add("show");
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+    }
+
+    /* ---------------- component builders ---------------- */
+    function kpiCard(label, value, delta, positive) {
+      let deltaHtml = "";
+      if (delta !== undefined && delta !== null) {
+        const cls = positive ? "pos" : "neg";
+        const arrow = positive ? "&#9650;" : "&#9660;";
+        deltaHtml = `<div class="kpi-delta ${cls}">${arrow}&nbsp;${esc(delta)}</div>`;
+      }
+      return `<div class="card">
+    <div class="kpi-label">${esc(label)}</div>
+    <div class="kpi-value">${value}</div>
+    ${deltaHtml}
+  </div>`;
+    }
+
+    function sectionTitle(title, caption) {
+      return `<div class="section-title">${esc(title)}</div>` +
+        (caption ? `<div class="section-caption">${esc(caption)}</div>` : "");
+    }
+
+    function tag(text, cls) {
+      return `<span class="tag tag-${cls}">${esc(text)}</span>`;
+    }
+
+    function table(headers, rows, opts) {
+      opts = opts || {};
+      const scrollCls = opts.scroll ? "table-scroll" : "";
+      let thead = "<tr>" + headers.map(h => `<th>${esc(h)}</th>`).join("") + "</tr>";
+      let tbody = rows.map(r => "<tr>" + r + "</tr>").join("");
+      return `<div class="table-wrap"><div class="${scrollCls}"><table><thead>${thead}</thead><tbody>${tbody}</tbody></table></div></div>`;
+    }
+
+    /* ---------------- SVG chart builders ---------------- */
+    function svgWrap(inner, viewW, viewH) {
+      return `<svg viewBox="0 0 ${viewW} ${viewH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">${inner}</svg>`;
+    }
+
+    function niceMax(v) {
+      if (v <= 0) return 10;
+      const mag = Math.pow(10, Math.floor(Math.log10(v)));
+      const norm = v / mag;
+      let step;
+      if (norm <= 1) step = 1; else if (norm <= 2) step = 2; else if (norm <= 5) step = 5; else step = 10;
+      return step * mag;
+    }
+
+    /* Vertical bar chart: 1-2 series, grouped or stacked */
+    function vBarChart(categories, series, opts) {
+      opts = opts || {};
+      const W = 880, H = opts.height || 220;
+      const padL = 58, padR = 16, padT = 16, padB = 44;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+      const stacked = !!opts.stacked;
+      let maxVal = 0;
+      categories.forEach((c, i) => {
+        if (stacked) {
+          let sum = 0; series.forEach(s => sum += (s.data[i] || 0));
+          maxVal = Math.max(maxVal, sum);
+        } else {
+          series.forEach(s => maxVal = Math.max(maxVal, s.data[i] || 0));
+        }
+      });
+      maxVal = niceMax(maxVal * 1.08);
+      const n = categories.length;
+      const groupW = plotW / n;
+      const barPad = groupW * 0.18;
+      const barsAvail = groupW - barPad * 2;
+      const seriesW = stacked ? barsAvail : barsAvail / series.length;
+
+      let bars = "";
+      let gridLines = "";
+      const gridSteps = 4;
+      for (let g = 0; g <= gridSteps; g++) {
+        const val = maxVal * g / gridSteps;
+        const y = padT + plotH - (val / maxVal) * plotH;
+        gridLines += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" class="grid-line"/>`;
+        gridLines += `<text x="${padL - 8}" y="${y + 3}" text-anchor="end" class="axis-label">${opts.valueFormatter ? opts.valueFormatter(val) : Math.round(val)}</text>`;
+      }
+
+      categories.forEach((cat, i) => {
+        const gx = padL + i * groupW + barPad;
+        let stackY = padT + plotH;
+        series.forEach((s, si) => {
+          const v = s.data[i] || 0;
+          const h = (v / maxVal) * plotH;
+          let x;
+          if (stacked) { x = gx; } else { x = gx + si * seriesW; }
+          const y = stacked ? (stackY - h) : (padT + plotH - h);
+          bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(seriesW - 3).toFixed(1)}" height="${Math.max(h, 0).toFixed(1)}" rx="3" fill="${s.color}" opacity="0.92"><title>${esc(cat)} — ${esc(s.name)}: ${fmtNum(v)}</title></rect>`;
+          if (stacked) stackY -= h;
+        });
+        const lx = gx + barsAvail / 2;
+        bars += `<text x="${lx.toFixed(1)}" y="${H - padB + 18}" text-anchor="middle" class="axis-label">${esc(cat)}</text>`;
+      });
+
+      let legend = "";
+      if (series.length > 1) {
+        legend = `<g transform="translate(${padL},4)">` + series.map((s, i) =>
+          `<g transform="translate(${i * 130},0)"><rect width="9" height="9" rx="2" fill="${s.color}"/><text x="14" y="8.5" class="axis-label" style="font-size:10px">${esc(s.name)}</text></g>`
+        ).join("") + `</g>`;
+      }
+
+      return `<div class="chart-box">${svgWrap(gridLines + bars + legend, W, H)}</div>`;
+    }
+
+    /* Horizontal bar chart: single series, with optional average vline */
+    function hBarChart(categories, values, color, opts) {
+      opts = opts || {};
+      const W = 880, H = opts.height || Math.max(280, categories.length * 34 + 60);
+      const padL = 190, padR = 60, padT = 12, padB = 30;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+      const maxVal = niceMax(Math.max(...values, 0.001) * 1.12);
+      const n = categories.length;
+      const rowH = plotH / n;
+      const barH = rowH * 0.6;
+
+      let bars = "";
+      let gridLines = "";
+      const gridSteps = 4;
+      for (let g = 0; g <= gridSteps; g++) {
+        const val = maxVal * g / gridSteps;
+        const x = padL + (val / maxVal) * plotW;
+        gridLines += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${H - padB}" class="grid-line"/>`;
+        gridLines += `<text x="${x}" y="${H - padB + 16}" text-anchor="middle" class="axis-label">${opts.valueFormatter ? opts.valueFormatter(val) : Math.round(val)}</text>`;
+      }
+
+      categories.forEach((cat, i) => {
+        const v = values[i] || 0;
+        const y = padT + i * rowH + (rowH - barH) / 2;
+        const w = (v / maxVal) * plotW;
+        bars += `<text x="${padL - 10}" y="${(y + barH / 2 + 4).toFixed(1)}" text-anchor="end" class="axis-label" style="font-size:10.5px">${esc(cat.length > 26 ? cat.slice(0, 24) + '…' : cat)}</text>`;
+        bars += `<rect x="${padL}" y="${y.toFixed(1)}" width="${Math.max(w, 0).toFixed(1)}" height="${barH.toFixed(1)}" rx="4" fill="${color}" opacity="0.92"><title>${esc(cat)}: ${fmtNum(v)}</title></rect>`;
+        bars += `<text x="${(padL + w + 6).toFixed(1)}" y="${(y + barH / 2 + 4).toFixed(1)}" class="bar-value">${opts.valueFormatter ? opts.valueFormatter(v) : fmtNum(v)}</text>`;
+      });
+
+      let avgLine = "";
+      if (opts.avgLine !== undefined) {
+        const ax = padL + (opts.avgLine / maxVal) * plotW;
+        avgLine = `<line x1="${ax}" y1="${padT}" x2="${ax}" y2="${H - padB}" stroke="var(--green)" stroke-width="2" stroke-dasharray="6,4"/>
+      <text x="${ax}" y="${padT - 2}" text-anchor="middle" style="font-family:var(--font-mono);font-size:10px;fill:var(--green);font-weight:700">AVG ${opts.avgLabel || opts.avgLine}</text>`;
+      }
+
+      return `<div class="chart-box">${svgWrap(gridLines + bars + avgLine, W, H)}</div>`;
+    }
+
+    /* Line chart: single series */
+    function lineChart(categories, values, color, opts) {
+      opts = opts || {};
+      const W = 880, H = opts.height || 340;
+      const padL = 54, padR = 20, padT = 20, padB = 40;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+      const minV = Math.min(...values, 0);
+      const maxV = niceMax(Math.max(...values) * 1.15);
+      const n = categories.length;
+      const stepX = n > 1 ? plotW / (n - 1) : 0;
+
+      const range = maxV - minV || 1;
+      const pts = values.map((v, i) => {
+        const x = padL + i * stepX;
+        const y = padT + plotH - ((v - minV) / range) * plotH;
+        return [x, y];
+      });
+
+      let gridLines = "";
+      for (let g = 0; g <= 4; g++) {
+        const val = minV + (range * g / 4);
+        const y = padT + plotH - ((val - minV) / range) * plotH;
+        gridLines += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" class="grid-line"/>`;
+        gridLines += `<text x="${padL - 8}" y="${y + 3}" text-anchor="end" class="axis-label">${val.toFixed(1)}%</text>`;
+      }
+      const zeroY = padT + plotH - ((0 - minV) / range) * plotH;
+
+      const pathD = pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+      const areaD = pathD + ` L${pts[pts.length - 1][0].toFixed(1)},${zeroY} L${pts[0][0].toFixed(1)},${zeroY} Z`;
+
+      let dots = "";
+      pts.forEach((p, i) => {
+        dots += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4.5" fill="${color}" stroke="var(--surface)" stroke-width="2"><title>${esc(categories[i])}: ${values[i]}%</title></circle>`;
+        dots += `<text x="${p[0].toFixed(1)}" y="${(p[1] - 12).toFixed(1)}" text-anchor="middle" class="axis-label" style="font-weight:700">${values[i]}%</text>`;
+        dots += `<text x="${p[0].toFixed(1)}" y="${H - padB + 18}" text-anchor="middle" class="axis-label">${esc(categories[i])}</text>`;
+      });
+
+      return `<div class="chart-box">${svgWrap(
+        gridLines +
+        `<path d="${areaD}" fill="${color}" opacity="0.08"/>` +
+        `<path d="${pathD}" fill="none" stroke="${color}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>` +
+        dots, W, H)}</div>`;
+    }
+
+    /* Multi-series line chart */
+    function multiLineChart(categories, series, opts) {
+      opts = opts || {};
+      const W = 880, H = opts.height || 340;
+      const padL = 70, padR = opts.dualAxis ? 70 : 20, padT = 20, padB = 40;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+
+      // Separate primary and secondary axis series
+      const primarySeries = series.filter(s => !s.secondaryAxis);
+      const secondarySeries = series.filter(s => s.secondaryAxis);
+
+      const primaryVals = primarySeries.flatMap(s => s.data);
+      const minV = Math.min(...primaryVals, 0);
+      const maxV = niceMax(Math.max(...primaryVals) * 1.15);
+      const range = maxV - minV || 1;
+
+      let minV2 = 0, maxV2 = 1, range2 = 1;
+      if (secondarySeries.length) {
+        const secVals = secondarySeries.flatMap(s => s.data);
+        minV2 = Math.min(...secVals, 0);
+        maxV2 = Math.max(...secVals) * 1.15;
+        if (maxV2 <= minV2) maxV2 = minV2 + 1;
+        range2 = maxV2 - minV2;
+      }
+
+      const n = categories.length;
+      const stepX = n > 1 ? plotW / (n - 1) : 0;
+
+      let gridLines = "";
+      for (let g = 0; g <= 4; g++) {
+        const val = minV + (range * g / 4);
+        const y = padT + plotH - ((val - minV) / range) * plotH;
+        gridLines += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" class="grid-line"/>`;
+        gridLines += `<text x="${padL - 8}" y="${y + 3}" text-anchor="end" class="axis-label">${fmtNum(Math.round(val))}</text>`;
+      }
+
+      // Secondary Y-axis labels
+      if (opts.dualAxis && secondarySeries.length) {
+        for (let g = 0; g <= 4; g++) {
+          const val = minV2 + (range2 * g / 4);
+          const y = padT + plotH - ((val - minV2) / range2) * plotH;
+          gridLines += `<text x="${W - padR + 8}" y="${y + 3}" text-anchor="start" class="axis-label" fill="#1E9E5A">${val.toFixed(1)}%</text>`;
+        }
+      }
+
+      let xLabels = "";
+      categories.forEach((cat, i) => {
+        const x = padL + i * stepX;
+        xLabels += `<text x="${x.toFixed(1)}" y="${H - padB + 18}" text-anchor="middle" class="axis-label">${esc(cat)}</text>`;
+      });
+
+      let lines = "";
+      series.forEach(s => {
+        const isSecondary = s.secondaryAxis;
+        const sMinV = isSecondary ? minV2 : minV;
+        const sRange = isSecondary ? range2 : range;
+        const pts = s.data.map((v, i) => {
+          const x = padL + i * stepX;
+          const y = padT + plotH - ((v - sMinV) / sRange) * plotH;
+          return [x, y];
+        });
+        const pathD = pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+        const dashAttr = s.dashed ? ' stroke-dasharray="6,4"' : '';
+        lines += `<path d="${pathD}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"${dashAttr}/>`;
+        pts.forEach((p, i) => {
+          const valLabel = isSecondary ? s.data[i].toFixed(1) + "%" : fmtNum(s.data[i]);
+          lines += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4" fill="${s.color}" stroke="var(--surface)" stroke-width="2"><title>${esc(s.name)} — ${esc(categories[i])}: ${valLabel}</title></circle>`;
+        });
+      });
+
+      let legend = `<div style="display:flex;gap:16px;justify-content:center;margin-top:8px;flex-wrap:wrap;">`;
+      series.forEach(s => {
+        const lineStyle = s.dashed ? 'border-top:2px dashed ' + s.color + ';width:12px;height:0;display:inline-block;' : 'width:12px;height:12px;border-radius:2px;background:' + s.color + ';display:inline-block;';
+        legend += `<span style="display:flex;align-items:center;gap:5px;font-size:.8rem;"><span style="${lineStyle}"></span>${esc(s.name)}</span>`;
+      });
+      legend += `</div>`;
+
+      return `<div class="chart-box">${svgWrap(gridLines + xLabels + lines, W, H)}</div>` + legend;
+    }
+
+    /* Donut chart */
+    function donutChart(labels, values, colors, opts) {
+      opts = opts || {};
+      const W = 420, H = opts.height || 300;
+      const cx = W / 2, cy = H / 2 - 8, r = Math.min(W, H) / 2 - 20, r0 = r * 0.58;
+      const total = values.reduce((a, b) => a + b, 0) || 1;
+      let angle = -Math.PI / 2;
+      let paths = "";
+      const legend = [];
+      labels.forEach((lab, i) => {
+        const v = values[i];
+        const frac = v / total;
+        const a0 = angle;
+        const a1 = angle + frac * Math.PI * 2;
+        angle = a1;
+        const large = (a1 - a0) > Math.PI ? 1 : 0;
+        const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
+        const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+        const xi0 = cx + r0 * Math.cos(a1), yi0 = cy + r0 * Math.sin(a1);
+        const xi1 = cx + r0 * Math.cos(a0), yi1 = cy + r0 * Math.sin(a0);
+        const d = `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)} L${xi0.toFixed(2)},${yi0.toFixed(2)} A${r0},${r0} 0 ${large} 0 ${xi1.toFixed(2)},${yi1.toFixed(2)} Z`;
+        paths += `<path d="${d}" fill="${colors[i]}"><title>${esc(lab)}: ${(frac * 100).toFixed(1)}%</title></path>`;
+        legend.push(`<div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:3px;background:${colors[i]};display:inline-block;"></span><span style="font-family:var(--font-mono);font-size:.76rem;color:var(--text-dim)">${esc(lab)}</span><span style="font-family:var(--font-mono);font-size:.76rem;font-weight:700;margin-left:auto">${(frac * 100).toFixed(1)}%</span></div>`);
+      });
+      const centerText = `<text x="${cx}" y="${cy - 4}" text-anchor="middle" style="font-family:var(--font-serif);font-weight:800;font-size:22px;fill:var(--text)">${labels.length}</text>
+    <text x="${cx}" y="${cy + 14}" text-anchor="middle" class="axis-label">SEGMENTS</text>`;
+      return `<div class="chart-box"><div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
+    <div style="flex:0 0 auto;width:220px">${svgWrap(paths + centerText, W, H)}</div>
+    <div style="flex:1;min-width:180px;display:flex;flex-direction:column;gap:10px">${legend.join("")}</div>
+  </div></div>`;
+    }
+
+    /* ============================================================
+       SCREEN RENDERERS
+       ============================================================ */
+
+    function navButtons(nextDisabled) {
+      const back = state.screen > 1 ? `<button class="btn secondary" onclick="goScreen(${state.screen - 1})">&larr; Back</button>` : `<span></span>`;
+      let next = `<span></span>`;
+      if (state.screen < 8) {
+        const dis = nextDisabled ? ' disabled title="Please fill in the required field to continue"' : '';
+        next = `<button class="btn"${dis} onclick="goScreen(${state.screen + 1})">Next &rarr;</button>`;
+      }
+      return `<div style="margin: 34px 0 10px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+          ${back}<div class="spacer"></div>${next}
+        </div>
+      </div>`;
+    }
+
+    function getAmbiguityMatches() {
+      if (state.searchTerm && DATA.ambiguity_matches[state.searchTerm]) {
+        return DATA.ambiguity_matches[state.searchTerm];
+      }
+      return [];
+    }
+
+    /* ---- SCREEN 1 : CATALOG SELECTION ---- */
+    function renderScreen1() {
+      const mode = state.searchMode;
+      let searchField = "";
+      if (mode === "Artist") {
+        const artistList = DATA.catalog_options.artists;
+        searchField = `<div class="field"><label class="field-label" style="text-align:left; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; font-size: 0.75rem; margin-bottom: 12px; color: var(--text-mute);">Artist Name</label>
+      <div class="autocomplete-wrap" id="acWrapArtist">
+        <input type="text" id="searchTermSel" value="${esc(state.searchTerm)}" placeholder="Type to search artists..." autocomplete="off"
+          oninput="acFilter('acWrapArtist','acListArtist','searchTermSel',dispatchSearch)"
+          onclick="acToggle('acListArtist')"
+          onkeydown="acKeyNav(event,'acListArtist','searchTermSel',dispatchSearch)"
+          style="font-size:1.15rem; padding:14px; border-radius:12px;">
+        <div class="autocomplete-list" id="acListArtist">
+          ${artistList.map(a => `<div class="autocomplete-item" onmousedown="acSelect('searchTermSel','acListArtist','${esc(a).replace(/'/g, "\\'")}',dispatchSearchAndRender)"><span class="ac-icon">${esc(a)[0]}</span>${esc(a)}</div>`).join('')}
+        </div>
+      </div>
+    </div>`;
+      } else if (mode === "Label") {
+        const labelList = DATA.catalog_options.labels;
+        searchField = `<div class="field"><label class="field-label" style="text-align:left; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; font-size: 0.75rem; margin-bottom: 12px; color: var(--text-mute);">Label Name</label>
+      <div class="autocomplete-wrap" id="acWrapLabel">
+        <input type="text" id="searchTermSel" value="${esc(state.searchTerm)}" placeholder="Type to search labels..." autocomplete="off"
+          oninput="acFilter('acWrapLabel','acListLabel','searchTermSel',dispatchSearch)"
+          onclick="acToggle('acListLabel')"
+          onkeydown="acKeyNav(event,'acListLabel','searchTermSel',dispatchSearch)"
+          style="font-size:1.15rem; padding:14px; border-radius:12px;">
+        <div class="autocomplete-list" id="acListLabel">
+          ${labelList.map(a => `<div class="autocomplete-item" onmousedown="acSelect('searchTermSel','acListLabel','${esc(a).replace(/'/g, "\\'")}',dispatchSearchAndRender)"><span class="ac-icon">${esc(a)[0]}</span>${esc(a)}</div>`).join('')}
+        </div>
+      </div>
+    </div>`;
+      } else {
+        searchField = `<div class="field"><label class="field-label" style="text-align:left; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; font-size: 0.75rem; margin-bottom: 12px; color: var(--text-mute);">UPLOAD ISRC LIST (EXCEL / CSV)</label>
+      <div class="upload-box" onclick="document.getElementById('isrcFile').click()" style="background: transparent;">
+        ${state.uploadedFile ? "&#128190; " + esc(state.uploadedFile) : "<span style='font-size: 1.2rem; margin-bottom: 12px; display: inline-block;'>&#8593;</span><br>Click to choose a file, or drag one here"}
+      </div>
+      <input type="file" id="isrcFile" accept=".xlsx,.csv" style="display:none" onchange="onIsrcUpload(this)">
+      <div class="hint" style="text-align: left; margin-top: 16px; font-size: 0.85rem; color: var(--text-mute);">Expected column: <b>ISRC</b> &mdash; one code per row.</div>
+      ${state.uploadedFile ? `<div class="notice success" style="text-align: left;">Loaded file: <b>${esc(state.uploadedFile)}</b> (dummy parse &mdash; 214 ISRCs detected)</div>` : ""}
+    </div>`;
+      }
+
+      // Next is allowed only when the user has provided a search value
+      const screen1CanNext = mode === "ISRC List"
+        ? !!state.uploadedFile
+        : !!(state.searchTerm && state.searchTerm.trim());
+
+      const objectives = [
+        ["Catalog Acquisition", "Which albums & tracks belong to the deal?"],
+        ["Revenue Analysis", "Current, Local, and ROW revenue"],
+        ["Consumption Analysis", "Audio vs Video, Paid vs Ad Supported"],
+        ["Corporate Valuation", "Inputs for the Corporate model"],
+      ];
+
+      return `
+    <div style="border-radius: var(--radius-l); padding: 60px 40px; max-width: 800px; margin: 40px auto 60px auto; text-align: center; box-shadow: var(--shadow);">
+      
+      <div class="field" style="display: flex; flex-direction: column; align-items: center; margin-bottom: 40px;">
+        <label class="field-label" style="text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; font-size: 0.75rem; margin-bottom: 16px; color: var(--text-mute);">SEARCH BY</label>
+        <div class="radio-row" id="searchModeRow" style="justify-content: center; gap: 12px;">
+          ${["Artist", "Label", "ISRC List"].map(m => `<div class="radio-opt ${m === mode ? "sel" : ""}" onclick="setSearchMode('${m}')" style="font-size: 0.9rem; font-family: var(--font-sans); font-weight: 600; padding: 10px 24px; border-radius: 24px; ${m === mode ? 'background: var(--accent); border-color: var(--accent); color: #fff;' : 'background: transparent; border-color: var(--border-strong);'}">${m}</div>`).join("")}
+        </div>
+      </div>
+      
+      <div style="max-width: 520px; margin: 0 auto;">
+        ${searchField}
+      </div>
+    </div>
+
+    ${sectionTitle("Business Objective Checklist")}
+    <div class="grid grid-4" style="margin-bottom: 40px;">
+      ${objectives.map(([t, d]) => `<div class="card"><div class="kpi-label" style="text-transform: uppercase; letter-spacing: 0.05em;">${esc(t)}</div><div class="card-body-text" style="margin-top: 8px;">${esc(d)}</div></div>`).join("")}
+    </div>
+
+    ${navButtons(!screen1CanNext)}
+  `;
+    }
+    function setSearchMode(m) { state.searchMode = m; state.uploadedFile = null; state.searchTerm = ""; render(); }
+    function onIsrcUpload(el) {
+      if (el.files && el.files[0]) {
+        state.uploadedFile = el.files[0].name;
+        state.searchTerm = "ISRC upload: " + el.files[0].name;
+        render();
+      }
+    }
+    /* ---- CUSTOM AUTOCOMPLETE HELPERS ---- */
+    function acOpen(listId) {
+      const list = document.getElementById(listId);
+      if (list) list.classList.add('open');
+    }
+    function acClose(listId) {
+      const list = document.getElementById(listId);
+      if (list) list.classList.remove('open');
+    }
+    function acToggle(listId) {
+      const list = document.getElementById(listId);
+      if (!list) return;
+      if (list.classList.contains('open')) {
+        list.classList.remove('open');  // 2nd click → close
+      } else {
+        list.classList.add('open');     // 1st click → open
+      }
+    }
+    function acFilter(wrapId, listId, inputId, callback) {
+      const input = document.getElementById(inputId);
+      const list = document.getElementById(listId);
+      if (!input || !list) return;
+      const q = input.value.toLowerCase().trim();
+      const items = list.querySelectorAll('.autocomplete-item');
+      let anyVisible = false;
+      items.forEach(item => {
+        const text = item.textContent.trim().toLowerCase();
+        const match = !q || text.includes(q);
+        item.style.display = match ? 'flex' : 'none';
+        if (match) anyVisible = true;
+      });
+      // show/hide no-result placeholder
+      let noRes = list.querySelector('.ac-no-result');
+      if (!anyVisible) {
+        if (!noRes) { noRes = document.createElement('div'); noRes.className = 'ac-no-result'; list.appendChild(noRes); }
+        noRes.textContent = 'No matches found';
+        noRes.style.display = 'block';
+      } else if (noRes) {
+        noRes.style.display = 'none';
+      }
+      list.classList.add('open');
+      if (callback) callback();
+    }
+    function acSelect(inputId, listId, value, callback) {
+      const input = document.getElementById(inputId);
+      if (input) { input.value = value; }
+      acClose(listId);
+      if (callback) callback();
+    }
+    function acKeyNav(event, listId, inputId, callback) {
+      const list = document.getElementById(listId);
+      if (!list || !list.classList.contains('open')) return;
+      const items = [...list.querySelectorAll('.autocomplete-item')].filter(i => i.style.display !== 'none');
+      const active = list.querySelector('.autocomplete-item.active');
+      let idx = items.indexOf(active);
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        if (active) active.classList.remove('active');
+        idx = (idx + 1) % items.length;
+        items[idx] && items[idx].classList.add('active');
+        items[idx] && items[idx].scrollIntoView({ block: 'nearest' });
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (active) active.classList.remove('active');
+        idx = (idx - 1 + items.length) % items.length;
+        items[idx] && items[idx].classList.add('active');
+        items[idx] && items[idx].scrollIntoView({ block: 'nearest' });
+      } else if (event.key === 'Enter') {
+        if (active) {
+          event.preventDefault();
+          const input = document.getElementById(inputId);
+          if (input) input.value = active.textContent.trim();
+          acClose(listId);
+          if (callback) callback();
+        }
+      } else if (event.key === 'Escape') {
+        acClose(listId);
+      }
+    }
+    // Close autocomplete when clicking outside
+    document.addEventListener('click', function (e) {
+      ['acListArtist', 'acListLabel'].forEach(id => {
+        const list = document.getElementById(id);
+        const wrap = list && list.closest('.autocomplete-wrap');
+        if (list && wrap && !wrap.contains(e.target)) acClose(id);
+      });
+    });
+
+    function dispatchSearch() {
+      const sel = document.getElementById("searchTermSel");
+      if (sel) state.searchTerm = sel.value;
+      state.resolvedEntities = [];
+      // Update Next button disabled state without full re-render
+      const nextBtn = document.querySelector('.btn:not(.secondary)');
+      if (nextBtn) {
+        const canNext = !!(state.searchTerm && state.searchTerm.trim());
+        nextBtn.disabled = !canNext;
+        nextBtn.title = canNext ? '' : 'Please fill in the required field to continue';
+      }
+    }
+    function dispatchSearchAndRender() {
+      dispatchSearch();
+      renderKeepScroll();
+    }
+
+    /* ---- SCREEN 2 : RESOLVE AMBIGUITY ---- */
+    function renderScreen2() {
+      // If pipeline is running/failed/completed, show pipeline UI instead
+      if (state.pipeline.status === "running" || state.pipeline.status === "failed" || state.pipeline.status === "completed") {
+        return `
+      ${renderPipelineProgress()}
+    `;
+      }
+
+      const matches = getAmbiguityMatches();
+
+      const confColor = c => c === "High" ? "green" : c === "Medium" ? "gold" : "grey";
+      const rows = matches.map(m => {
+        const checked = state.resolvedEntities.includes(m.name) ? "checked" : "";
+        return `<td><input type="checkbox" class="row-check" ${checked} onchange="toggleEntitySelect('${esc(m.name).replace(/'/g, "\\'")}', this.checked)"></td>
+          <td class="strong">${esc(m.name)}</td><td>${tag(m.confidence, confColor(m.confidence))}</td><td class="num">${fmtNum(m.track_count)}</td><td>${m.recommended ? tag("Recommended", "green") : "&mdash;"}</td>`;
+      });
+
+      const selectedHtml = state.resolvedEntities.length
+        ? `<div class="notice success">Selected: <b>${state.resolvedEntities.map(esc).join("</b>, <b>")}</b></div>`
+        : `<div class="notice info">Select at least one entity to continue.</div>`;
+
+      return `
+    ${table(["Select", "Candidate Entity", "Match Confidence", "Track Count", "System Recommendation"], rows)}
+    ${selectedHtml}
+    ${navButtons(false)}
+  `;
+    }
+    function toggleEntitySelect(name, checked) {
+      if (checked) {
+        if (!state.resolvedEntities.includes(name)) state.resolvedEntities.push(name);
+      } else {
+        state.resolvedEntities = state.resolvedEntities.filter(n => n !== name);
+      }
+      renderKeepScroll();
+    }
+
+    /* ---- SCREEN 4 : LOCAL TERRITORY MAPPING ---- */
+    function renderScreen4() {
+      const allCountries = DATA.territories.countries;
+      const regions = DATA.territories.regions;
+      const mode = state.territoryMode;
+
+      let selector = "";
+      if (mode === "Region selection") {
+        const regionOpts = Object.keys(regions).map(r => `<option value="${esc(r)}" ${r === state.region ? "selected" : ""}>${esc(r)}</option>`).join("");
+        const selected = regions[state.region];
+        selector = `
+      <div class="field"><label class="field-label">Region</label><select id="regionSel" onchange="setRegion(this.value)">${regionOpts}</select></div>
+      <div class="field"><label class="field-label">Countries in Region (auto-applied)</label>
+        <div class="check-row">${selected.map(c => `<div class="check-chip sel" style="cursor:default;opacity:.85">${esc(c)}</div>`).join("")}</div>
+      </div>`;
+        state.localTerritories = selected;
+      } else {
+        selector = `<div class="field"><label class="field-label">Local Territories</label>
+      <div class="check-row">${allCountries.map(c => {
+          const sel = state.localTerritories.includes(c);
+          return `<div class="check-chip ${sel ? "sel" : ""}" onclick="toggleTerritory('${esc(c)}')">${sel ? "&#10003; " : ""}${esc(c)}</div>`;
+        }).join("")}</div></div>`;
+      }
+
+      const rowCount = state.localTerritories.length;
+      const rowRest = allCountries.length - rowCount;
+
+      return `
+    <div class="field">
+      <label class="field-label">Select By</label>
+      <div class="radio-row">
+        ${["Country selection", "Region selection"].map(m => `<div class="radio-opt ${m === mode ? "sel" : ""}" onclick="setTerritoryMode('${m}')">${m}</div>`).join("")}
+      </div>
+    </div>
+    ${selector}
+    <div class="grid grid-2" style="margin-top:6px;">
+      ${kpiCard("Local Territories Selected", rowCount)}
+      ${kpiCard("Rest of World (ROW)", rowRest + " territories")}
+    </div>
+    <div style="margin-top: 24px;">
+      ${sectionTitle("Country Wise Output")}
+      ${table(
+        ["Country Name", "Consumption", "% of total", "Local Mapping", "Audio PPD's", "Video PPD's", "Local %", "Rest of the World %", "Local Audio PPD", "Local Video PPD", "RoW Audio PPD", "RoW Video PPD", "Total Audio PPD"],
+        [
+          `<td><strong>Worldwide</strong></td><td class="num">98,765,432</td><td class="num">100%</td><td>Worldwide</td><td class="num">0.004321</td><td class="num">0.001876</td><td class="num">-</td><td class="num">-</td><td class="num">0.003210</td><td class="num">0.001540</td><td class="num">0.001111</td><td class="num">0.000336</td><td class="num">0.004321</td>`,
+          ...allCountries.map((c, i) => {
+            const isLocal = state.localTerritories.includes(c);
+            const cons = Math.floor(25000000 / (i + 1.2));
+            const pct = Math.max(1, 22 - i) + "%";
+            const audioPpd = (0.002000 + (Math.abs(Math.sin(i)) * 0.005)).toFixed(6);
+            const videoPpd = (0.000800 + (Math.abs(Math.cos(i)) * 0.0015)).toFixed(6);
+            const pctL = isLocal ? Math.floor(30 + Math.abs(Math.sin(i)) * 40) + "%" : "0%";
+            const pctR = !isLocal ? Math.floor(10 + Math.abs(Math.cos(i)) * 50) + "%" : "0%";
+            return `<td>${esc(c)}</td><td class="num">${fmtNum(cons)}</td><td class="num">${pct}</td><td style="color: ${isLocal ? 'var(--tag-green-text)' : 'var(--text-dim)'}">${isLocal ? "Local" : "RoW"}</td><td class="num">${audioPpd}</td><td class="num">${videoPpd}</td><td class="num">${pctL}</td><td class="num">${pctR}</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td>`;
+          })
+        ],
+        { scroll: true }
+      )}
+    </div>
+    ${navButtons(false)}
+  `;
+    }
+    function setTerritoryMode(m) { state.territoryMode = m; render(); }
+    function setRegion(r) { state.region = r; render(); }
+    function toggleTerritory(c) {
+      const idx = state.localTerritories.indexOf(c);
+      if (idx >= 0) state.localTerritories.splice(idx, 1); else state.localTerritories.push(c);
+      render();
+    }
+
+    /* ---- SCREEN 3 : METADATA TO INCLUDE ---- */
+    function renderScreen3() {
+      // If pipeline is still running or failed, show pipeline status
+      if (state.pipeline.status === "running" || state.pipeline.status === "failed") {
+        return `
+      ${renderPipelineProgress()}
+    `;
+      }
+
+      const term = (state.metadataSearch || "").toLowerCase();
+      const yearFilter3 = state.screen3YearFilter || "All";
+      const allYears3 = [...new Set(DATA.albums.map(a => a.release_year))].sort((a, b) => b - a);
+      const filteredAlbums = DATA.albums.filter(a => {
+        if (yearFilter3 !== "All" && String(a.release_year) !== yearFilter3) return false;
+        if (!term) return true;
+        const nameMatch = (a.album_name || "").toLowerCase().includes(term);
+        const isrcMatch = (a.isrc || "").toLowerCase().includes(term);
+        return nameMatch || isrcMatch;
+      });
+
+      const albumRows = filteredAlbums.map(a => {
+        const inc = !!state.includedAlbums[a.album_id];
+        return `<td><input type="checkbox" class="row-check" ${inc ? "checked" : ""} onchange="toggleAlbumInclude('${a.album_id}', this.checked)"></td>
+      <td class="strong">${esc(a.album_name)}</td><td>${esc(a.release_type)}</td><td class="num">${a.release_year}</td>
+      <td class="num">${a.track_count}</td><td class="num">${fmtUSD(a.current_revenue_usd)}</td>`;
+      });
+
+      return `
+    <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-end; margin-bottom:16px;">
+      <div class="field" style="margin:0; flex:1; max-width:400px;">
+        <label class="field-label">Search by Album or ISRC</label>
+        <input id="metadataSearchInput" type="text" placeholder="Type to filter..." value="${esc(state.metadataSearch)}" oninput="setMetadataSearch(this.value)" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border);">
+      </div>
+      <div class="field" style="margin:0; max-width:180px;">
+        <label class="field-label">Release Year</label>
+        <select onchange="setScreen3YearFilter(this.value)">
+          <option value="All" ${yearFilter3 === "All" ? "selected" : ""}>All</option>
+          ${allYears3.map(y => `<option value="${y}" ${String(y) === yearFilter3 ? "selected" : ""}>${y}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    ${table(["Include", "Album", "Release Type", "Release Year", "Tracks", "Current Revenue (USD)"], albumRows, { scroll: true })}
+    ${navButtons(false)}
+  `;
+    }
+    function toggleAlbumInclude(id, val) { state.includedAlbums[id] = val; renderKeepScroll(); }
+    function setMetadataSearch(v) { state.metadataSearch = v; renderKeepScroll(); }
+    function setScreen3YearFilter(v) { state.screen3YearFilter = v; render(); }
+
+    /* ---- SCREEN 5 : CATALOG ANALYTICS ---- */
+    function renderScreen5() {
+      const idx = Math.round(DATA.market_growth.artist_growth_pct / DATA.market_growth.market_growth_pct * 100);
+      const matrix = DATA.consumption_matrix;
+      const buckets = matrix.map(m => m.bucket.replace(/ H1$/," Jan-Jun").replace(/ H2$/," Jul-Dec"));
+
+      const tabs = ["All", "Audio", "Video", "Premium", "Ad Supported", "Growth Trend"];
+      let tabContent = "";
+      const t = state.analyticsTab;
+      if (t === 0) {
+        const series = [
+          { name: "Audio Premium", color: "#E1261C", data: matrix.map(m => m.audio_premium) },
+          { name: "Audio Ad Supported", color: "#8A8A8A", data: matrix.map(m => m.audio_ad_supported) },
+          { name: "Video Premium", color: "#2A63C7", data: matrix.map(m => m.video_premium) },
+          { name: "Video Ad Supported", color: "#B9861F", data: matrix.map(m => m.video_ad_supported) },
+        ];
+        // Compute total per bucket and YoY growth %
+        const totals = matrix.map(m => m.audio_premium + m.audio_ad_supported + m.video_premium + m.video_ad_supported);
+        const growthPcts = totals.map((v, i) => i === 0 ? 0 : ((v - totals[i - 1]) / (totals[i - 1] || 1) * 100));
+        series.push({ name: "Growth %", color: "#1E9E5A", data: growthPcts, dashed: true, secondaryAxis: true });
+        tabContent = multiLineChart(buckets, series, { dualAxis: true });
+      } else if (t === 1) {
+        tabContent = vBarChart(buckets, [
+          { name: "Audio Premium", color: "#E1261C", data: matrix.map(m => m.audio_premium) },
+          { name: "Audio Ad Supported", color: "#8A8A8A", data: matrix.map(m => m.audio_ad_supported) },
+        ], { stacked: true });
+      } else if (t === 2) {
+        tabContent = vBarChart(buckets, [
+          { name: "Video Premium", color: "#2A63C7", data: matrix.map(m => m.video_premium) },
+          { name: "Video Ad Supported", color: "#8A8A8A", data: matrix.map(m => m.video_ad_supported) },
+        ], { stacked: true });
+      } else if (t === 3) {
+        tabContent = vBarChart(buckets, [
+          { name: "Audio Premium", color: "#E1261C", data: matrix.map(m => m.audio_premium) },
+          { name: "Video Premium", color: "#2A63C7", data: matrix.map(m => m.video_premium) },
+        ], { stacked: false });
+      } else if (t === 4) {
+        tabContent = vBarChart(buckets, [
+          { name: "Audio Ad Supported", color: "#B9861F", data: matrix.map(m => m.audio_ad_supported) },
+          { name: "Video Ad Supported", color: "#8A8A8A", data: matrix.map(m => m.video_ad_supported) },
+        ], { stacked: false });
+      } else {
+        const g = DATA.growth_trend;
+        tabContent = lineChart(g.map(x => x.year), g.map(x => x.yoy_growth_pct), "#E1261C") +
+          `<div class="card" style="margin-top:14px;">
+        <div class="kpi-label">Market Growth Comparison</div>
+        <div class="card-body-text" style="font-size:.95rem;color:var(--text)">
+          Artist Growth <b style="color:var(--accent)">${DATA.market_growth.artist_growth_pct}%</b> &divide;
+          Market Growth <b>${DATA.market_growth.market_growth_pct}%</b> =
+          <b style="color:var(--green)">${idx}% of market growth</b>
+        </div>
+      </div>`;
+      }
+
+      return `
+    <div class="grid grid-4">
+      ${kpiCard("Catalog from Releases &gt; 10y", DATA.catalog_age_split.older_than_10y_pct + "%")}
+      ${kpiCard("Catalog from Recent Releases", DATA.catalog_age_split.recent_releases_pct + "%")}
+      ${kpiCard("Artist Growth", DATA.market_growth.artist_growth_pct + "%", "vs prior year", true)}
+      ${kpiCard("PP", idx + "%", "Market: " + DATA.market_growth.market_growth_pct + "%", idx >= 100)}
+    </div>
+    <div class="subtabs">
+      ${tabs.map((tb, i) => `<button class="subtab ${i === t ? "active" : ""}" onclick="setAnalyticsTab(${i})">${tb}</button>`).join("")}
+    </div>
+    ${tabContent}
+    ${navButtons(false)}
+  `;
+    }
+    function setAnalyticsTab(i) { state.analyticsTab = i; render(); }
+
+    /* ---- SCREEN 6 : RELEASE-YEAR & REVENUE ---- */
+    function renderScreen6() {
+      let ry = DATA.release_year_analysis;
+
+      // Apply release-year filter
+      const fromYear6 = state.screen6FromYear ? parseInt(state.screen6FromYear) : null;
+      const toYear6 = state.screen6ToYear ? parseInt(state.screen6ToYear) : null;
+      if (fromYear6 || toYear6) {
+        ry = ry.filter(function(r) {
+          const match = r.bucket.match(/\d{4}/);
+          if (!match) return true;
+          const yr = parseInt(match[0]);
+          if (fromYear6 && yr < fromYear6) return false;
+          if (toYear6 && yr > toYear6) return false;
+          return true;
+        });
+      }
+
+      const buckets = ry.map(r => r.bucket.replace(/ H1$/," Jan-Jun").replace(/ H2$/," Jul-Dec"));
+      const tabs = ["Consumption", "Revenue", "Growth"];
+      const t = state.revenueTab;
+      let chart = "";
+      if (t === 0) chart = vBarChart(buckets, [{ name: "Streams", color: "#E1261C", data: ry.map(r => r.consumption_streams) }], { valueFormatter: v => (v / 1e6).toFixed(0) + "M", height: 220 });
+      else if (t === 1) chart = vBarChart(buckets, [{ name: "Revenue", color: "#2A63C7", data: ry.map(r => r.revenue_usd) }], { valueFormatter: v => "$" + (v / 1000000).toFixed(1) + "M", height: 220 });
+      else chart = vBarChart(buckets, [{ name: "YoY Growth %", color: "#1E9E5A", data: ry.map(r => r.yoy_growth_pct) }], { valueFormatter: v => v.toFixed(0) + "%", height: 220 });
+
+      const rows = ry.map(r => `<td class="strong">${esc(r.bucket.replace(/ H1$/," Jan-Jun").replace(/ H2$/," Jul-Dec"))}</td><td class="num">${(r.consumption_streams / 1000000).toFixed(1)}M</td><td class="num">${fmtUSD(r.revenue_usd)}</td><td class="num">${r.yoy_growth_pct}%</td>`);
+
+      const ppdRows = [
+        ...Object.entries(DATA.ppd.current_splits).map(([k, v]) => `<td>Current</td><td class="strong">${esc(k)}</td><td class="num">${fmtUSD4(v)}</td>`),
+        ...Object.entries(DATA.ppd.future_splits).map(([k, v]) => `<td>Future-State</td><td class="strong">${esc(k)}</td><td class="num">${fmtUSD4(v)}</td>`)
+      ];
+
+      return `
+    ${sectionTitle("Local / ROW Revenue Output")}
+    <div class="grid grid-2">
+      ${kpiCard("Local Revenue", fmtUSD(DATA.local_row_revenue.local_revenue_usd))}
+      ${kpiCard("ROW Revenue", fmtUSD(DATA.local_row_revenue.row_revenue_usd))}
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+      <div class="subtabs" style="margin-bottom:0;">
+        ${tabs.map((tb, i) => `<button class="subtab ${i === t ? "active" : ""}" onclick="setRevenueTab(${i})">${tb}</button>`).join("")}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <label style="font-size:0.8rem;font-weight:500;color:var(--fg);opacity:0.7;margin:0;">From</label>
+        <input type="number" placeholder="Year" min="1900" max="2099" value="${state.screen6FromYear}" onchange="setScreen6FromYear(this.value)" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:0.8rem;">
+        <label style="font-size:0.8rem;font-weight:500;color:var(--fg);opacity:0.7;margin:0;">To</label>
+        <input type="number" placeholder="Year" min="1900" max="2099" value="${state.screen6ToYear}" onchange="setScreen6ToYear(this.value)" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:0.8rem;">
+        ${(state.screen6FromYear || state.screen6ToYear) ? '<button onclick="clearScreen6Years()" style="padding:3px 8px;font-size:0.75rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);cursor:pointer;">Clear</button>' : ''}
+      </div>
+    </div>
+    ${chart}
+    ${table(["Release Year Bucket", "Consumption", "Revenue (USD)", "YoY Growth %"], rows)}
+
+    ${table(["Split Type", "Segment", "PPD (USD)"], ppdRows)}
+    ${navButtons(false)}
+  `;
+    }
+    function setRevenueTab(i) { state.revenueTab = i; render(); }
+    function setScreen6FromYear(v) { state.screen6FromYear = v; render(); }
+    function setScreen6ToYear(v) { state.screen6ToYear = v; render(); }
+    function clearScreen6Years() { state.screen6FromYear = ""; state.screen6ToYear = ""; render(); }
+
+    /* ---- SCREEN 7 : ALBUM ANALYSIS ---- */
+    function renderScreen7() {
+      const filter = state.albumFilter;
+      const yearFilter = state.albumYearFilter;
+      const albumsWithStatus = DATA.albums.map(a => Object.assign({}, a, { Status: state.includedAlbums[a.album_id] ? "Include" : "Exclude" }));
+      let view = filter === "All" ? albumsWithStatus : albumsWithStatus.filter(a => a.Status === filter);
+      if (yearFilter !== "All") {
+        view = view.filter(a => String(a.release_year) === yearFilter);
+      }
+
+      // Get unique release years for dropdown
+      const allYears = [...new Set(DATA.albums.map(a => a.release_year))].sort((a, b) => b - a);
+
+      const rows = view.map(a => `<td class="strong">${esc(a.album_name)}</td><td>${esc(a.release_type)}</td><td class="num">${a.release_year}</td><td class="num">${a.track_count}</td><td class="num">${fmtNum(a.total_consumption_streams || 0)}</td><td class="num">${fmtUSD(a.current_revenue_usd)}</td><td>${a.Status === "Include" ? tag("Include", "green") : tag("Exclude", "red")}</td>`);
+
+      const included = albumsWithStatus.filter(a => a.Status === "Include");
+      const totalTracks = included.reduce((s, a) => s + a.track_count, 0);
+      const totalRevenue = included.reduce((s, a) => s + a.current_revenue_usd, 0);
+      const totalConsumption = included.reduce((s, a) => s + (a.total_consumption_streams || 0), 0);
+
+      const albumChartTab = state.albumChartTab || 0;
+      const sortedInc = included.slice().sort((a, b) => albumChartTab === 1
+        ? (b.total_consumption_streams || 0) - (a.total_consumption_streams || 0)
+        : b.current_revenue_usd - a.current_revenue_usd);
+
+      const chartTabs = ["Revenue", "Consumption"];
+      const chartTabsHtml = chartTabs.map((tb, i) =>
+        `<button class="subtab ${i === albumChartTab ? "active" : ""}" onclick="setAlbumChartTab(${i})">${tb}</button>`
+      ).join("");
+
+      const chart = albumChartTab === 1
+        ? hBarChart(sortedInc.map(a => a.album_name), sortedInc.map(a => a.total_consumption_streams || 0), "#2A63C7", { valueFormatter: v => (v / 1e6).toFixed(1) + "M", height: Math.max(200, sortedInc.length * 22 + 60) })
+        : hBarChart(sortedInc.map(a => a.album_name), sortedInc.map(a => a.current_revenue_usd), "#E1261C", { valueFormatter: v => "$" + (v / 1000).toFixed(0) + "K", height: Math.max(200, sortedInc.length * 22 + 60) });
+
+      return `
+    <div class="grid grid-4" style="margin-top:16px;">
+      ${kpiCard("Albums in Scope", included.length)}
+      ${kpiCard("Total Tracks", fmtNum(totalTracks))}
+      ${kpiCard("Total Consumption", (totalConsumption / 1000000).toLocaleString("en-US", {maximumFractionDigits: 1}) + "M")}
+      ${kpiCard("Total Current Revenue", fmtUSD(totalRevenue))}
+    </div>
+    <div style="display:flex; gap:100px; flex-wrap:wrap; align-items:flex-end; padding-top: 10px;">
+      <div class="field" style="max-width:220px;">
+        <label class="field-label">Filter</label>
+        <select onchange="setAlbumFilter(this.value)">
+          ${["All", "Include", "Exclude"].map(f => `<option ${f === filter ? "selected" : ""}>${f}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field" style="max-width:220px;">
+        <label class="field-label">Release Year</label>
+        <select onchange="setAlbumYearFilter(this.value)">
+          <option value="All" ${yearFilter === "All" ? "selected" : ""}>All</option>
+          ${allYears.map(y => `<option value="${y}" ${String(y) === yearFilter ? "selected" : ""}>${y}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    ${table(["Album", "Release Type", "Release Year", "Track Count", "Total Consumption (Streams)", "Current Revenue (USD)", "Status"], rows, { scroll: true })}
+    ${sectionTitle("Album Analysis Chart (Included)")}
+    <div class="subtabs">${chartTabsHtml}</div>
+    ${chart}
+    ${navButtons(false)}
+  `;
+    }
+    function setAlbumFilter(v) { state.albumFilter = v; render(); }
+    function setAlbumYearFilter(v) { state.albumYearFilter = v; render(); }
+    function setAlbumChartTab(i) { state.albumChartTab = i; render(); }
+
+    /* ---- SCREEN 8 : CORPORATE EXPORT ---- */
+    function computeExport() {
+      const included = DATA.albums.filter(a => state.includedAlbums[a.album_id]);
+      const activeNr = DATA.new_release_tracks.filter(d => state.excludedFlags.indexOf(d.flag) === -1);
+      const avgStreams = activeNr.length ? Math.round((activeNr.reduce((s, d) => s + d.first_12m_streams_millions, 0) / activeNr.length) * 100) / 100 : 0;
+      const idx = Math.round(DATA.market_growth.artist_growth_pct / DATA.market_growth.market_growth_pct * 100);
+      return {
+        "Catalog Name": state.resolvedEntity || state.searchTerm,
+        "Local Territories": state.localTerritories.join(", "),
+        "Total Albums (Included)": included.length,
+        "Total Tracks (Included)": included.reduce((s, a) => s + a.track_count, 0),
+        "Current Annual Revenue (USD)": included.reduce((s, a) => s + a.current_revenue_usd, 0),
+        "Local Revenue (USD)": DATA.local_row_revenue.local_revenue_usd,
+        "ROW Revenue (USD)": DATA.local_row_revenue.row_revenue_usd,
+        "Catalog Age Split — Older than 10y": DATA.catalog_age_split.older_than_10y_pct + "%",
+        "Catalog Age Split — Recent": DATA.catalog_age_split.recent_releases_pct + "%",
+        "YoY Growth 2025": DATA.market_growth.artist_growth_pct + "%",
+        "Market Growth 2025": DATA.market_growth.market_growth_pct + "%",
+        "PP": idx + "%",
+        "Expected Growth Assumption (Analyst)": state.expectedGrowth + "%",
+        "Expected Decay Assumption (Analyst)": state.expectedDecay + "%",
+        "Average New-Track Streams (M)": avgStreams,
+        "Projected Next Album Streams (M)": Math.round(avgStreams * 10 * 10) / 10,
+        _included: included,
+      };
+    }
+    function renderScreen8() {
+      const exp = computeExport();
+      const rows = Object.entries(exp).filter(([k]) => k !== "_included").map(([k, v]) => `<td class="strong">${esc(k)}</td><td class="num">${esc(v)}</td>`);
+
+      return `
+    <div class="grid grid-3" style="margin-top:16px;">
+      ${kpiCard("Current Annual Revenue", fmtUSD(exp["Current Annual Revenue (USD)"]))}
+      ${kpiCard("Local / ROW Split", fmtUSD(exp["Local Revenue (USD)"]) + " / " + fmtUSD(exp["ROW Revenue (USD)"]))}
+      ${kpiCard("PP", exp["PP"])}
+    </div>
+    ${table(["Corporate Template Field", "Value"], rows, { scroll: true })}
+    <div style="display:flex;justify-content:flex-end;margin-top:24px;">
+      <div>
+        ${sectionTitle("Export")}
+        <button class="btn" onclick="downloadExcel()">&#11015;&nbsp; Download Corporate Excel Template</button>
+      </div>
+    </div>
+    ${navButtons(false)}
+  `;
+    }
+
+    function downloadExcel() {
+      try {
+        const exp = computeExport();
+        const wb = XLSX.utils.book_new();
+        const expRows = Object.entries(exp).filter(([k]) => k !== "_included").map(([k, v]) => ({ "Corporate Template Field": k, "Value": String(v) }));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expRows), "Corporate Template Inputs");
+
+        const albumRows = exp._included.map(a => ({ album_name: a.album_name, release_type: a.release_type, release_year: a.release_year, track_count: a.track_count, current_revenue_usd: a.current_revenue_usd }));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(albumRows), "Album Detail");
+
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(DATA.release_year_analysis), "Release-Year Analysis");
+
+        const fname = "corporate_valuation_inputs_" + String(exp["Catalog Name"]).replace(/\s+/g, "_") + ".xlsx";
+        XLSX.writeFile(wb, fname);
+        toast("Excel template downloaded");
+      } catch (e) {
+        console.error(e);
+        toast("Export failed — see console");
+      }
+    }
+
+    /* ============================================================
+       MAIN RENDER / NAV / THEME / TICKER
+       ============================================================ */
+
+    const RENDERERS = [renderScreen1, renderScreen2, renderScreen3, renderScreen4, renderScreen5, renderScreen6, renderScreen7, renderScreen8];
+
+    /* ---------- PIPELINE JOB MANAGEMENT ---------- */
+    function startPipelineJob() {
+      state.pipeline.status = "running";
+      state.pipeline.progress = 0;
+      state.pipeline.startedAt = Date.now();
+      state.pipeline.errorMessage = null;
+      state.pipeline.failedStep = null;
+      // Persist pipeline state
+      savePipelineState();
+      render();
+      // Save entities to checkpoint so Streamlit can create the table
+      var stepData = {
+        entities: state.resolvedEntities,
+        searchMode: state.searchMode,
+        searchTerm: state.searchTerm,
+        create_table: true
+      };
+      try {
+        localStorage.setItem("__wb_create_table", JSON.stringify(stepData));
+      } catch(e) {}
+      if (typeof window.__saveCheckpoint === "function") {
+        window.__saveCheckpoint(3, stepData);
+      }
+      // If the backend already created the table, animate progress quickly to 100%
+      if (window.__CATALOG_CREATED__) {
+        var quickProgress = 0;
+        var quickTimer = setInterval(function() {
+          quickProgress += 10;
+          state.pipeline.progress = Math.min(100, quickProgress);
+          savePipelineState();
+          render();
+          if (quickProgress >= 100) {
+            clearInterval(quickTimer);
+            completePipeline();
+          }
+        }, 300);
+        return;
+      }
+      // Start polling progress
+      pollPipelineProgress();
+    }
+
+    function savePipelineState() {
+      try {
+        localStorage.setItem("__wb_pipeline", JSON.stringify({
+          status: state.pipeline.status,
+          progress: state.pipeline.progress,
+          startedAt: state.pipeline.startedAt,
+          errorMessage: state.pipeline.errorMessage,
+          retryCount: state.pipeline.retryCount,
+          failedStep: state.pipeline.failedStep,
+        }));
+      } catch(e) {}
+    }
+
+    function restorePipelineState() {
+      try {
+        var saved = localStorage.getItem("__wb_pipeline");
+        if (saved) {
+          var p = JSON.parse(saved);
+          state.pipeline.status = p.status || "idle";
+          state.pipeline.progress = p.progress || 0;
+          state.pipeline.startedAt = p.startedAt || null;
+          state.pipeline.errorMessage = p.errorMessage || null;
+          state.pipeline.retryCount = p.retryCount || 0;
+          state.pipeline.failedStep = p.failedStep || null;
+          // If was running but backend already created the table, complete it
+          if (state.pipeline.status === "running" && window.__CATALOG_CREATED__) {
+            completePipeline();
+            return;
+          }
+          // If was running, resume polling
+          if (state.pipeline.status === "running") {
+            pollPipelineProgress();
+          }
+        }
+      } catch(e) {}
+    }
+
+    function pollPipelineProgress() {
+      if (state.pipeline.status !== "running") return;
+      window.__pipelineTimer = setInterval(function() {
+        if (state.pipeline.status !== "running") {
+          clearInterval(window.__pipelineTimer);
+          return;
+        }
+        // Check if backend has completed the table creation
+        if (window.__CATALOG_CREATED__) {
+          completePipeline();
+          return;
+        }
+        var elapsed = Date.now() - state.pipeline.startedAt;
+        var estimatedMs = state.pipeline.estimatedMinutes * 60 * 1000;
+        var pct = Math.min(95, Math.round((elapsed / estimatedMs) * 95));
+        state.pipeline.progress = pct;
+        savePipelineState();
+        render();
+        // Broadcast progress to Streamlit for backend coordination
+        try {
+          var ch = new BroadcastChannel("wb_pipeline_sync");
+          ch.postMessage({ type: "pipeline_progress", progress: pct, status: state.pipeline.status });
+          ch.close();
+        } catch(e) {}
+      }, 3000);
+    }
+
+    function completePipeline() {
+      state.pipeline.status = "completed";
+      state.pipeline.progress = 100;
+      clearInterval(window.__pipelineTimer);
+      savePipelineState();
+      render();
+    }
+
+    function failPipeline(errorMsg, failedStep) {
+      state.pipeline.status = "failed";
+      state.pipeline.errorMessage = errorMsg || "An unexpected error occurred while processing.";
+      state.pipeline.failedStep = failedStep || 2;
+      clearInterval(window.__pipelineTimer);
+      savePipelineState();
+      render();
+    }
+
+    function retryPipeline() {
+      if (state.pipeline.retryCount >= state.pipeline.maxRetries) {
+        // Max retries exceeded — show contact support
+        state.pipeline.status = "failed";
+        state.pipeline.errorMessage = "Maximum retry attempts exceeded. Please contact the Support team for assistance.";
+        savePipelineState();
+        render();
+        return;
+      }
+      state.pipeline.retryCount++;
+      // Go back to the failed step
+      var targetStep = state.pipeline.failedStep || 2;
+      state.pipeline.status = "idle";
+      state.pipeline.progress = 0;
+      state.pipeline.errorMessage = null;
+      state.pipeline.failedStep = null;
+      savePipelineState();
+      state.screen = targetStep;
+      render();
+    }
+
+    function resetPipeline() {
+      state.pipeline.status = "idle";
+      state.pipeline.progress = 0;
+      state.pipeline.startedAt = null;
+      state.pipeline.errorMessage = null;
+      state.pipeline.retryCount = 0;
+      state.pipeline.failedStep = null;
+      clearInterval(window.__pipelineTimer);
+      savePipelineState();
+    }
+
+    function contactSupport() {
+      // Open support modal or show info
+      var subject = encodeURIComponent("M&A Workbench - Pipeline Error");
+      var body = encodeURIComponent(
+        "Hi Support Team,\n\n" +
+        "I'm experiencing a persistent error in the M&A Catalog Valuation Workbench.\n\n" +
+        "Error: " + (state.pipeline.errorMessage || "Unknown") + "\n" +
+        "Step: " + (state.pipeline.failedStep || "N/A") + "\n" +
+        "Retry attempts: " + state.pipeline.retryCount + "\n" +
+        "Entities selected: " + state.resolvedEntities.join(", ") + "\n\n" +
+        "Please help resolve this issue.\n\nThank you."
+      );
+      window.open("mailto:ma-workbench-support@sonymusic.com?subject=" + subject + "&body=" + body, "_blank");
+    }
+
+    // Listen for pipeline status updates from Streamlit backend
+    try {
+      var pipelineCh = new BroadcastChannel("wb_pipeline_sync");
+      pipelineCh.onmessage = function(event) {
+        var d = event.data;
+        if (d.type === "pipeline_complete") {
+          completePipeline();
+        } else if (d.type === "pipeline_failed") {
+          failPipeline(d.error || "Pipeline execution failed.", d.failedStep || 2);
+        } else if (d.type === "pipeline_progress_update") {
+          state.pipeline.progress = d.progress || state.pipeline.progress;
+          savePipelineState();
+          render();
+        }
+      };
+    } catch(e) {}
+
+    /* ---------- PIPELINE PROGRESS UI RENDERER ---------- */
+    function renderPipelineProgress() {
+      var p = state.pipeline;
+      if (p.status === "running") {
+        var elapsed = p.startedAt ? Math.round((Date.now() - p.startedAt) / 60000) : 0;
+        var remaining = Math.max(0, p.estimatedMinutes - elapsed);
+        return `
+      <div class="pipeline-overlay">
+        <div class="pipeline-card">
+          <div class="pipeline-icon">&#9881;</div>
+          <div class="pipeline-title">Building Catalog Table</div>
+          <div class="pipeline-subtitle">Creating table with selected artists, labels, and ISRC codes.<br>This process typically takes ~2 minutes.</div>
+          <div class="progress-label">Progress</div>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar-fill animated" style="width: ${p.progress}%"></div>
+          </div>
+          <div class="progress-pct">${p.progress}%</div>
+          <div class="pipeline-elapsed">
+            Elapsed: ${elapsed} min &nbsp;|&nbsp; Est. remaining: ~${remaining} min
+          </div>
+          <div style="margin-top:16px;font-size:0.82rem;color:var(--text-mute)">
+            You can close this page and check back later. Progress is saved automatically.
+          </div>
+        </div>
+      </div>`;
+      } else if (p.status === "failed") {
+        var canRetry = p.retryCount < p.maxRetries;
+        var retryBtn = canRetry
+          ? `<button class="btn-retry" onclick="retryPipeline()">&#8635; Retry from Step ${p.failedStep || 2}</button>`
+          : '';
+        var supportMsg = !canRetry
+          ? `<div style="margin-top:12px;font-size:0.85rem;color:var(--text-dim);">All retry attempts exhausted. Please contact the Support team.</div>`
+          : `<div style="margin-top:12px;font-size:0.82rem;color:var(--text-mute);">Retries used: ${p.retryCount} of ${p.maxRetries}</div>`;
+        return `
+      <div class="pipeline-overlay">
+        <div class="pipeline-card">
+          <div class="pipeline-icon" style="color:var(--accent)">&#9888;</div>
+          <div class="pipeline-title">Pipeline Failed</div>
+          <div class="pipeline-subtitle">An error occurred while building the catalog table.</div>
+          <div class="pipeline-error">
+            <div class="pipeline-error-title">Error Details</div>
+            <div class="pipeline-error-msg">${esc(p.errorMessage || "Unknown error")}</div>
+          </div>
+          ${supportMsg}
+          <div class="pipeline-actions">
+            ${retryBtn}
+            <button class="btn-support" onclick="contactSupport()">&#9993; Contact Support</button>
+          </div>
+        </div>
+      </div>`;
+      } else if (p.status === "completed") {
+        return `
+      <div class="pipeline-overlay">
+        <div class="pipeline-card">
+          <div class="pipeline-icon" style="color:var(--green)">&#10003;</div>
+          <div class="pipeline-success-badge">Table Created Successfully</div>
+          <div class="pipeline-title">Ready to Continue</div>
+          <div class="pipeline-subtitle">The catalog table has been built. Click Next to proceed to metadata selection.</div>
+        </div>
+      </div>`;
+      }
+      return "";
+    }
+
+    function pipelineProceedToStep3() {
+      state.pipeline.status = "idle";
+      savePipelineState();
+      goScreen(3);
+    }
+
+    function goScreen(n) {
+      var prev = state.screen;
+      // Intercept step 2 → 3: trigger pipeline job
+      if (prev === 2 && n === 3 && state.pipeline.status !== "completed" && state.pipeline.status !== "running") {
+        // Start the pipeline — it will auto-complete quickly if table already created
+        startPipelineJob();
+        // Broadcast to Streamlit to trigger the actual table creation
+        try {
+          var ch = new BroadcastChannel("wb_pipeline_sync");
+          ch.postMessage({
+            type: "start_table_creation",
+            entities: state.resolvedEntities,
+            searchMode: state.searchMode,
+            searchTerm: state.searchTerm
+          });
+          ch.close();
+        } catch(e) {}
+        return; // Don't navigate yet
+      }
+      // If navigating to step 3 and pipeline completed, allow it and reset
+      if (n === 3 && state.pipeline.status === "completed") {
+        resetPipeline();
+      }
+      state.screen = Math.max(1, Math.min(8, n));
+      // Mark all steps before the new screen as completed
+      state.completedSteps = new Set();
+      for (var i = 1; i < state.screen; i++) {
+        state.completedSteps.add(i);
+      }
+      // Persist completed steps
+      try { localStorage.setItem("__wb_completed_steps", JSON.stringify(Array.from(state.completedSteps))); } catch(e) {}
+      render();
+      // Persist current step and visited steps to localStorage
+      try {
+        localStorage.setItem("__wb_current_step", String(state.screen));
+        var visited = JSON.parse(localStorage.getItem("__wb_visited_steps") || "[]");
+        if (visited.indexOf(state.screen) === -1) visited.push(state.screen);
+        localStorage.setItem("__wb_visited_steps", JSON.stringify(visited));
+        var completed = Array.from(state.completedSteps);
+        // Broadcast step change to Streamlit tracker component for real-time DB save
+        var ch = new BroadcastChannel("wb_step_sync");
+        ch.postMessage({ type: "step_change", step: state.screen, visited: visited, completed: completed });
+        ch.close();
+      } catch(e) {}
+    }
+
+    function renderTabbar() {
+
+      const html = SCREENS.map(s => {
+        const active = s.n === state.screen;
+        const completed = state.completedSteps.has(s.n) && !active;
+        const cls = `tab-pill${active ? " active" : ""}${completed ? " completed" : ""}`;
+        const check = completed ? `<span class="check-icon">&#10003;</span>` : "";
+        return `<span class="${cls}" style="--pill-c:${s.color}; cursor: default; pointer-events: none;">
+      ${check}${s.n} &middot; ${s.label}
+    </span>`;
+      }).join("");
+      $("#tabbar").innerHTML = html;
+    }
+
+    function renderMeta() {
+      // Entity chip removed from UI.
+    }
+
+    const SCREEN_TITLES = [
+      { label: "Select Catalog", caption: "Identify the catalog to be evaluated by artist, label, or an uploaded ISRC list." },
+      { label: "Resolve Ambiguity", caption: "Select one or more catalog entities. Near-duplicate names must not be merged silently." },
+      { label: "Metadata to Include", caption: "Select which albums / tracks / labels flow into the valuation." },
+      { label: "Local Territory Selection", caption: "Required input — drives PPD calculations, revenue allocation, and Corporate outputs." },
+      { label: "Catalog Analytics", caption: "Consumption split by content type and monetization model, with catalog age and market benchmark KPIs." },
+      { label: "Release-Year Analysis & Revenue Conversion", caption: "Consumption, revenue, and growth by release-year bucket, plus PPD-based revenue conversion and Local/ROW output." },
+      { label: "Album Analysis", caption: "Albums, release year, track count, total consumption (by release year bucket), and current revenue for the resolved catalog." },
+      { label: "Corporate Export", caption: "Standardized summary tables and Corporate-model inputs, ready for the Corporate Excel process." },
+    ];
+
+    function renderTopNav() {
+      const pipelineBusy = state.pipeline.status === "running" || state.pipeline.status === "failed";
+      const back = state.screen > 1 && !pipelineBusy ? `<button class="btn secondary" onclick="goScreen(${state.screen - 1})">&larr; Back</button>` : `<span></span>`;
+      let nextDisabled = false;
+      if (state.screen === 1) {
+        const mode = state.searchMode;
+        nextDisabled = mode === "ISRC List" ? !state.uploadedFile : !(state.searchTerm && state.searchTerm.trim());
+      }
+      const dis = nextDisabled ? ' disabled title="Please fill in the required field to continue"' : '';
+      const next = state.screen < 8 && !pipelineBusy ? `<button class="btn"${dis} onclick="goScreen(${state.screen + 1})">Next &rarr;</button>` : `<span></span>`;
+      const t = SCREEN_TITLES[state.screen - 1];
+      const centerHtml = `<div style="text-align:center; flex:1; min-width:0;">
+        
+        <div class="section-title" style="text-align:center; margin-bottom:2px; padding-left:0; margin-top:0;">${esc(t.label)}</div>
+        <div class="section-caption" style="text-align:center; margin-bottom:4px; padding-left:0; font-family:var(--font-serif); font-size:0.8rem; font-weight:200; color:var(--text-main); letter-spacing:-0.01em;">${esc(t.caption)}</div>
+      </div>`;
+      $("#topNav").innerHTML = `<div style="flex:0 0 120px;display:flex;align-items:center;">${back}</div>${centerHtml}<div style="flex:0 0 120px;display:flex;align-items:center;justify-content:flex-end;">${next}</div>`;
+    }
+
+    function render() {
+      renderTabbar();
+      renderTopNav();
+      renderMeta();
+      $("#screenRoot").innerHTML = RENDERERS[state.screen - 1]();
+    }
+
+    /* Re-render without losing scroll position (used for slider/number inputs) */
+    function renderKeepScroll() {
+      const y = window.scrollY;
+      const activeEl = document.activeElement;
+      let activeId = null;
+      let sStart = null;
+      let sEnd = null;
+      if (activeEl && activeEl.id && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+        activeId = activeEl.id;
+        try {
+          sStart = activeEl.selectionStart;
+          sEnd = activeEl.selectionEnd;
+        } catch (e) { }
+      }
+
+      render();
+      window.scrollTo(0, y);
+
+      if (activeId) {
+        const el = document.getElementById(activeId);
+        if (el) {
+          el.focus();
+          if (sStart !== null && sEnd !== null) {
+            try { el.setSelectionRange(sStart, sEnd); } catch (e) { }
+          }
+        }
+      }
+    }
+
+    /* ---- Theme toggle ---- */
+    function setTheme(t) {
+      state.theme = t;
+      document.documentElement.setAttribute("data-theme", t);
+      // Label shows the mode you will switch TO on next click
+      $("#themeLabel").textContent = t === "dark" ? "LIGHT" : "DARK";
+      localStorage.setItem("wb_theme", t);
+    }
+    $("#themeToggle").addEventListener("click", () => {
+      setTheme(state.theme === "dark" ? "light" : "dark");
+    });
+
+    /* ---- Init ---- */
+    // Restore saved screen from Streamlit-injected value
+    const __initialStep = window.__INITIAL_STEP__ || 1;
+    if (__initialStep > 1 && __initialStep <= 8) {
+      state.screen = __initialStep;
+    }
+    // Restore completed steps from localStorage, and mark all steps before current as completed
+    try {
+      if (__initialStep > 1) {
+        var saved = JSON.parse(localStorage.getItem("__wb_completed_steps") || "[]");
+        saved.forEach(function(s) { state.completedSteps.add(s); });
+      } else {
+        localStorage.removeItem("__wb_completed_steps");
+      }
+    } catch(e) {}
+    for (var i = 1; i < state.screen; i++) { state.completedSteps.add(i); }
+    try { localStorage.setItem("__wb_completed_steps", JSON.stringify(Array.from(state.completedSteps))); } catch(e) {}
+    // Persist initial step to localStorage (current + visited)
+    try {
+      localStorage.setItem("__wb_current_step", String(state.screen));
+      var visited = JSON.parse(localStorage.getItem("__wb_visited_steps") || "[]");
+      if (visited.indexOf(state.screen) === -1) visited.push(state.screen);
+      localStorage.setItem("__wb_visited_steps", JSON.stringify(visited));
+    } catch(e) {}
+    // Restore saved preference; fall back to "light" (the default)
+    const savedTheme = localStorage.getItem("wb_theme") || "light";
+    state.theme = savedTheme;
+    setTheme(savedTheme);
+    // Restore pipeline state (so progress bar shows when user returns)
+    restorePipelineState();
+    render();
+
+  </script>
+</body>
+
+</html>

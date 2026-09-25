@@ -1,0 +1,40 @@
+</head>
+
+<body>
+  <div class="app" id="app">
+
+    <header class="topbar">
+      <div class="brand">
+        <img src="sonymusic.png" alt="Sony Music" height="42" style="max-width:100%;height:auto;max-height:42px;">
+        <div class="brand-text">
+          <div class="brand-name">SONY MUSIC</div>
+          <div class="brand-sub">LATIN</div>
+        </div>
+      </div>
+      <div class="topbar-center">
+        <div class="topbar-title">M&amp;A CATALOG VALUATION PLATFORM</div>
+        <div class="topbar-desc">An intelligent solution that identifies music catalogues, resolves artist and catalogue
+          ambiguities, maps ownership and distribution territories, and generates decision-ready valuation insights.
+        </div>
+      </div>
+      <button class="theme-toggle" id="themeToggle">
+        <span id="themeLabel">LIGHT</span>
+        <span class="toggle-track"><span class="toggle-thumb" id="toggleThumb"></span></span>
+      </button>
+      <div id="userArea" style="display:flex;align-items:center;gap:12px;margin-left:12px;">
+        <div id="userEmail" style="font-weight:600;color:var(--text);font-size:0.95rem"></div>
+        <button class="btn secondary" id="logoutBtn" onclick="logoutUser()">Logout</button>
+      </div>
+    </header>
+
+    <nav class="tabbar" id="tabbar"></nav>
+    <div id="topNav" class="nav-row" style="margin-top:8px;"></div>
+
+    <main id="screenRoot"></main>
+
+    <footer class="footer">SONY MUSIC LATIN &middot; M&amp;A CATALOG VALUATION PLATFORM &mdash; ALL DATA ILLUSTRATIVE
+    </footer>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
