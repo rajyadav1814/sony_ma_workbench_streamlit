@@ -206,28 +206,27 @@ def render_welcome_screen(session):
 
             st.session_state["user_email"] = clean_email
 
-            with st.spinner("Signing in and loading your workbench..."):
-                open_sessions = get_open_sessions(session, clean_email)
-                if open_sessions:
-                    # Multiple in-progress catalogues are possible (one per artist/label
-                    # search) — store the whole list so the resume screen can let the
-                    # user pick which one to continue, restart, or remove.
-                    st.session_state["_pending_resume_list"] = open_sessions
-                    st.session_state["_pending_resume"] = open_sessions[0]
-                else:
-                    # No existing session — create new and go straight to dashboard.
-                    new_sess = create_new_session(session, clean_email)
-                    st.session_state["welcomed"] = True
-                    st.session_state["session_id"] = new_sess["session_id"]
-                    st.session_state["current_step"] = new_sess["current_step"]
-                    st.session_state["step_data"] = new_sess.get("step_data", {})
-                    st.session_state["_login_transition"] = True
-                    save_checkpoint(
-                        session,
-                        new_sess["session_id"],
-                        new_sess["current_step"],
-                        new_sess.get("step_data", {}),
-                    )
+            open_sessions = get_open_sessions(session, clean_email)
+            if open_sessions:
+                # Multiple in-progress catalogues are possible (one per artist/label
+                # search) — store the whole list so the resume screen can let the
+                # user pick which one to continue, restart, or remove.
+                st.session_state["_pending_resume_list"] = open_sessions
+                st.session_state["_pending_resume"] = open_sessions[0]
+            else:
+                # No existing session — create new and go straight to dashboard.
+                new_sess = create_new_session(session, clean_email)
+                st.session_state["welcomed"] = True
+                st.session_state["session_id"] = new_sess["session_id"]
+                st.session_state["current_step"] = new_sess["current_step"]
+                st.session_state["step_data"] = new_sess.get("step_data", {})
+                st.session_state["_login_transition"] = True
+                save_checkpoint(
+                    session,
+                    new_sess["session_id"],
+                    new_sess["current_step"],
+                    new_sess.get("step_data", {}),
+                )
             st.rerun()
 
 
@@ -593,7 +592,7 @@ def render_resume_screen(session):
     # ─── Heading with Start new action on the right ────────────────────────────
     _n = len(sessions_list)
     _subtitle = (
-        f"You have {_n} catalogues in progress" if _n > 1
+        f"You have {_n} catalogues in progress. Would you like to Continue, Restart, or Remove an existing catalogue and Start New" if _n > 1
         else "Pick up where you left off or start fresh"
     )
     heading_col, start_col = st.columns([4, 1], gap="small")

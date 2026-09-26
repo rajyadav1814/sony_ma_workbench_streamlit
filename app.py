@@ -104,6 +104,7 @@ _app_styles = """<style>
 
     /* Hide ALL Streamlit skeleton/loading/stale placeholders */
     [data-testid="stSkeleton"],
+    [data-testid="stComponentLoading"],
     .stSkeleton,
     [class*="skeleton"],
     [class*="Skeleton"],
@@ -117,31 +118,6 @@ _app_styles = """<style>
         height: 0 !important;
         overflow: hidden !important;
         opacity: 0 !important;
-    }
-
-    /* Keep a stable handoff visible while Streamlit rebuilds the iframe. */
-    [data-testid="stComponentLoading"] {
-        display: flex !important;
-        visibility: visible !important;
-        position: fixed !important;
-        inset: 0 !important;
-        z-index: 999997 !important;
-        align-items: center !important;
-        justify-content: center !important;
-        height: auto !important;
-        min-height: 100vh !important;
-        overflow: visible !important;
-        opacity: 1 !important;
-        background: #F1EFE7 !important;
-    }
-    [data-testid="stComponentLoading"]::before {
-        content: "";
-        width: 34px;
-        height: 34px;
-        border: 4px solid #E5E1D8;
-        border-top-color: #E1261C;
-        border-radius: 50%;
-        animation: wb-build-spin .8s linear infinite;
     }
 
     iframe[title*="streamlit"] {
@@ -227,7 +203,7 @@ if _transition_loader_requested:
     elif _params.get("wb_logout") == "1":
         _loader_title = "Signing out…"
     else:
-        _loader_title = "Loading workbench…"
+        _loader_title = "Processing Workbench…"
     _transition_loader.markdown(
         f"""
         <div id="wb-navigation-loader" class="wb-build-loader" role="status" aria-live="polite">
