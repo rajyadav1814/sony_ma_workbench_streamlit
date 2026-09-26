@@ -196,6 +196,50 @@ if hasattr(st, "html"):
 else:
     st.markdown(_app_styles, unsafe_allow_html=True)
 
+_params = st.query_params
+_catalog_build_requested = (
+    _params.get("wb_create_table") == "1"
+    and _params.get("wb_step2_created") != "1"
+)
+_step_navigation_requested = (
+    _params.get("wb_step") in {str(step) for step in range(MIN_STEP, MAX_STEP + 1)}
+    and not _catalog_build_requested
+)
+_login_transition_requested = st.session_state.get("_login_transition", False)
+_ui_transition_requested = st.session_state.get("_ui_transition", False)
+_transition_loader_requested = (
+    _catalog_build_requested
+    or _step_navigation_requested
+    or _login_transition_requested
+    or _ui_transition_requested
+    or _params.get("wb_logout") == "1"
+    or _params.get("wb_action") == "move_resume"
+    or _params.get("wb_reset") == "1"
+)
+_transition_loader = st.empty()
+if _transition_loader_requested:
+    if _catalog_build_requested:
+        _loader_title = "Building catalog…"
+    elif _step_navigation_requested and _params.get("wb_step") == "2":
+        _loader_title = "Processing matching catalogues…"
+    elif _step_navigation_requested:
+        _loader_title = "Processing…"
+    elif _params.get("wb_logout") == "1":
+        _loader_title = "Signing out…"
+    else:
+        _loader_title = "Loading workbench…"
+    _transition_loader.markdown(
+        f"""
+        <div id="wb-navigation-loader" class="wb-build-loader" role="status" aria-live="polite">
+          <div class="wb-build-loader__card">
+            <div class="wb-build-loader__spinner" aria-hidden="true"></div>
+            <div>{_loader_title}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 # ─── Resolve app directory (so we can read html/ partials) ───────────────────
 APP_DIR = Path(__file__).resolve().parent
 
@@ -211,7 +255,6 @@ if "_session_tables_checked" not in st.session_state:
     st.session_state["_session_tables_checked"] = True
 
 # ─── Restore session from query params (after JS-triggered reload) ────────────
-_params = st.query_params
 
 if _params.get("wb_logout") == "1":
     for key in list(st.session_state.keys()):
@@ -269,6 +312,9 @@ if "wb_step" in _params:
 
 # ─── Auth gate ───────────────────────────────────────────────────────────────
 if not st.session_state.get("user_email"):
+    st.session_state.pop("_ui_transition", None)
+    st.session_state.pop("_login_transition", None)
+    _transition_loader.empty()
     from steps.welcome import render_welcome_screen
     render_welcome_screen(session)
     st.stop()
@@ -278,6 +324,8 @@ if (
     or "_pending_resume_list" in st.session_state
     or st.session_state.get("_force_resume")
 ) and "welcomed" not in st.session_state:
+    st.session_state.pop("_ui_transition", None)
+    _transition_loader.empty()
     from steps.welcome import render_resume_screen
     render_resume_screen(session)
     st.stop()
@@ -334,43 +382,6 @@ wb_dropdown_search = params.get("wb_dropdown_search", "")
 wb_dropdown_mode = params.get("wb_dropdown_mode", wb_search_mode)
 wb_isrc_file = params.get("wb_isrc_file", "")
 wb_isrc_filename = params.get("wb_isrc_filename", "")
-
-# Step 2 → 3 triggers a host reload so Python can create the catalog table.
-# Render this outside the iframe before database work to avoid a blank screen.
-_catalog_build_requested = (
-    params.get("wb_create_table") == "1"
-    and params.get("wb_step2_created") != "1"
-)
-_step2_navigation_requested = (
-    params.get("wb_step") == "2"
-    and not _catalog_build_requested
-)
-_step_navigation_requested = (
-    params.get("wb_step") in {str(step) for step in range(MIN_STEP, MAX_STEP + 1)}
-    and not _catalog_build_requested
-)
-_login_transition_requested = st.session_state.get("_login_transition", False)
-_catalog_build_loader = st.empty()
-if _catalog_build_requested or _step_navigation_requested or _login_transition_requested:
-    if _catalog_build_requested:
-        _loader_title = "Building catalog…"
-    elif _step_navigation_requested and params.get("wb_step") == "2":
-        _loader_title = "Processing matching catalogues…"
-    elif _step_navigation_requested:
-        _loader_title = f"Processing…"
-    else:
-        _loader_title = "Loading workbench…"
-    _catalog_build_loader.markdown(
-        f"""
-        <div id="wb-navigation-loader" class="wb-build-loader" role="status" aria-live="polite">
-          <div class="wb-build-loader__card">
-            <div class="wb-build-loader__spinner" aria-hidden="true"></div>
-            <div>{_loader_title}</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 # ─── Load all data & compute (wrapped in spinner for loading feedback) ────────
 # Most functions use @st.cache_data so subsequent reloads are fast (cache hit).
@@ -642,6 +653,8 @@ html_full = "\n".join(html_parts)
 html_full = html_full.replace('src="sonymusic.png"', f'src="{_logo_data_uri()}"')
 
 components.html(html_full, height=900, scrolling=True)
+_transition_loader.empty()
+st.session_state.pop("_ui_transition", None)
 if _login_transition_requested:
     st.session_state.pop("_login_transition", None)
 
