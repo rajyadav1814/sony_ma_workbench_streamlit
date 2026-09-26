@@ -79,6 +79,7 @@ def render_welcome_screen(session):
                 width: 100% !important;
                 min-height: 44px !important;
                 appearance: none !important;
+                color-scheme: light !important;
                 color: #1a1a2e !important;
                 background: #ffffff !important;
                 border: 1px solid #9ca3af !important;
@@ -88,6 +89,19 @@ def render_welcome_screen(session):
                 height: 44px !important;
                 outline: none !important;
                 box-shadow: inset 0 1px 2px rgba(0,0,0,0.06) !important;
+            }
+            [data-testid="stTextInput"] input:autofill {
+                -webkit-text-fill-color: #1a1a2e !important;
+                -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+                box-shadow: 0 0 0 1000px #ffffff inset !important;
+            }
+            [data-testid="stTextInput"] input:-webkit-autofill,
+            [data-testid="stTextInput"] input:-webkit-autofill:hover,
+            [data-testid="stTextInput"] input:-webkit-autofill:focus,
+            [data-testid="stTextInput"] input:-webkit-autofill:active {
+                -webkit-text-fill-color: #1a1a2e !important;
+                -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+                box-shadow: 0 0 0 1000px #ffffff inset !important;
             }
             [data-testid="stTextInput"] input:focus {
                 border-color: #3b5de7 !important;
