@@ -16,8 +16,7 @@ from session_manager import (
 
 def render_welcome_screen(session):
     """Render the welcome / login form. Sets session_state and triggers rerun."""
-    st.markdown(
-        """
+    welcome_styles = """
         <style>
             [data-testid="stVerticalBlock"] {gap: 1rem !important;}
             [data-testid="stAppViewContainer"] {
@@ -156,9 +155,11 @@ def render_welcome_screen(session):
                 opacity: 1 !important;
             }
         </style>
-        """,
-        unsafe_allow_html=True,
-    )
+        """
+    if hasattr(st, "html"):
+        st.html(welcome_styles)
+    else:
+        st.markdown(welcome_styles, unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([1, 4, 1])
     with col2:
@@ -256,7 +257,7 @@ def render_resume_screen(session):
                 background: #F1EFE7 !important;
             }
             div.block-container {
-                padding: 0px 150px !important; max-width: 100% !important;
+                padding: 0px 200px !important; max-width: 100% !important;
                 display: flex; align-items: flex-start; justify-content: center;
                 min-height: 100vh; max-height: none !important;
                 overflow: visible !important;
@@ -315,10 +316,10 @@ def render_resume_screen(session):
             }
             .resume-topbar-desc {
                 color: #5a564c;
-                font-size: 12px;
+                font-size: 15px;
                 line-height: 1.4;
-                max-width: 700px;
-                margin-top: 4px;
+                max-width: 800px;
+                margin-top: 6px;
             }
             .resume-logout {
                 height: 36px;
@@ -340,7 +341,7 @@ def render_resume_screen(session):
                 color: #1b5a02;
                 font-size: 32px;
                 font-weight: 800;
-                margin: 0 0 8px 0;
+                margin: 0 0 -17px 0;
                 text-align: center;
             }
             .resume-heading .subtitle {
@@ -354,14 +355,14 @@ def render_resume_screen(session):
             .resume-session-card {
                 background: transparent;
                 border-radius: 0;
-                padding: 18px 20px 14px;
+                padding: 0px 30px 8px;
                 border: 0;
                 margin-bottom: 0;
             }
             [data-testid="stVerticalBlockBorderWrapper"]:has(.catalog-card-marker),
             .st-emotion-cache-1fpp8sd:has(.catalog-card-marker) {
                 display: flex !important;
-                gap: 1rem !important;
+                gap: 0rem !important;
                 width: 100% !important;
                 max-width: 100% !important;
                 height: auto !important;
@@ -372,7 +373,7 @@ def render_resume_screen(session):
                 justify-content: flex-start !important;
                 border: 5px solid rgb(215 69 69 / 20%) !important;
                 border-radius: 3.5rem !important;
-                padding: calc(1rem - 1px) !important;
+                padding: calc(1rem - 10px) !important;
                 overflow: visible !important;
             }
             .resume-session-header {

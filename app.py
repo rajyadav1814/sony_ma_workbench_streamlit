@@ -34,8 +34,7 @@ st.set_page_config(
 )
 
 # Hide Streamlit default furniture for full-bleed HTML + proper spinner overlay
-st.markdown(
-    """<style>
+_app_styles = """<style>
     .stMainBlockContainer { padding: 0 !important; max-width: 100% !important; }
     header[data-testid="stHeader"] { display: none !important; }
     footer { display: none !important; }
@@ -191,9 +190,11 @@ st.markdown(
     }
     @keyframes wb-build-spin { to { transform: rotate(360deg); } }
 
-    </style>""",
-    unsafe_allow_html=True,
-)
+    </style>"""
+if hasattr(st, "html"):
+    st.html(_app_styles)
+else:
+    st.markdown(_app_styles, unsafe_allow_html=True)
 
 # ─── Resolve app directory (so we can read html/ partials) ───────────────────
 APP_DIR = Path(__file__).resolve().parent
