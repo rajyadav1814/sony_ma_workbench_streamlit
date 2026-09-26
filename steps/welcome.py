@@ -371,7 +371,7 @@ def render_resume_screen(session):
                 flex: 1 1 0% !important;
                 align-items: flex-start !important;
                 justify-content: flex-start !important;
-                border: 5px solid rgb(215 69 69 / 20%) !important;
+                border: 5px solid rgb(20 19 19 / 20%) !important;
                 border-radius: 2.5rem !important;
                 padding: calc(1rem - 3px) !important;
                 overflow: visible !important;
