@@ -372,8 +372,8 @@ def render_resume_screen(session):
                 align-items: flex-start !important;
                 justify-content: flex-start !important;
                 border: 5px solid rgb(215 69 69 / 20%) !important;
-                border-radius: 3.5rem !important;
-                padding: calc(1rem - 10px) !important;
+                border-radius: 2.5rem !important;
+                padding: calc(1rem - 3px) !important;
                 overflow: visible !important;
             }
             .resume-session-header {
@@ -476,7 +476,7 @@ def render_resume_screen(session):
 
             [data-testid="element-container"]:has(.mk-continue) ~ [data-testid="element-container"] button,
             [data-testid="stElementContainer"]:has(.mk-continue) ~ [data-testid="stElementContainer"] button {
-                background-color: #16a34a !important;
+                background-color: #a18219 !important;
             }
             [data-testid="element-container"]:has(.mk-restart) ~ [data-testid="element-container"] button,
             [data-testid="stElementContainer"]:has(.mk-restart) ~ [data-testid="stElementContainer"] button {
