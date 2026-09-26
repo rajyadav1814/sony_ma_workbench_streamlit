@@ -242,7 +242,7 @@ def render_resume_screen(session):
                 background: #F1EFE7 !important;
             }
             div.block-container {
-                padding: 0px 20px !important; max-width: 100% !important;
+                padding: 0px 150px !important; max-width: 100% !important;
                 display: flex; align-items: flex-start; justify-content: center;
                 min-height: 100vh; max-height: none !important;
                 overflow: visible !important;
@@ -321,7 +321,6 @@ def render_resume_screen(session):
             /* Heading */
             .resume-heading {
                 width: 100%;
-                padding: 10px 0 4px;
             }
             .resume-heading h2 {
                 color: #1b5a02;
