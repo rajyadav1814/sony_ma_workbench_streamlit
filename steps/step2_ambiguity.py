@@ -1,7 +1,6 @@
 """Step 2: Resolve Ambiguity — select which entities to include."""
 
 import streamlit as st
-import pandas as pd
 
 
 def render_step2(data, conn, session):
@@ -14,17 +13,19 @@ def render_step2(data, conn, session):
         st.info("No ambiguity matches available. Go back and search for a catalogue first.")
         return
 
-    df = pd.DataFrame(matches)
     display_cols = ["name", "track_count"]
-    if "confidence" in df.columns:
+    if any("confidence" in match for match in matches):
         display_cols.append("confidence")
 
     # Show as an editable table with checkboxes
     already_selected = st.session_state.get("resolved_entities", [])
-    df["Select"] = df["name"].isin(already_selected)
+    rows = [
+        {**match, "Select": match.get("name") in already_selected}
+        for match in matches
+    ]
 
     edited_df = st.data_editor(
-        df[["Select"] + display_cols],
+        [{key: row.get(key) for key in ["Select"] + display_cols} for row in rows],
         column_config={
             "Select": st.column_config.CheckboxColumn("Select", default=False),
             "name": st.column_config.TextColumn("Name"),
@@ -37,7 +38,7 @@ def render_step2(data, conn, session):
     )
 
     # Update session state from edits
-    selected_names = edited_df[edited_df["Select"]]["name"].tolist()
+    selected_names = [row["name"] for row in edited_df if row.get("Select")]
     st.session_state["resolved_entities"] = selected_names
 
     if selected_names:

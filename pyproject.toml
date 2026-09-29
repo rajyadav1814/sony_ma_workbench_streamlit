@@ -6,7 +6,8 @@ description = ""
 dependencies = [
     "streamlit",
     "psycopg[binary]",
-    "python-dotenv"
+    "python-dotenv",
+    "openpyxl"
 ]
 
 [tool.uv]

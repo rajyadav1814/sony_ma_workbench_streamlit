@@ -1,7 +1,6 @@
 """Data loading from PostgreSQL tables — cached per session."""
 
 import json
-import pandas as pd
 import streamlit as st
 from config import (
     ANALYTICS_DATABASE,
@@ -32,6 +31,16 @@ COUNTRY_CODE_TO_NAME = {
 }
 
 
+def _row_to_dict(row) -> dict:
+    if hasattr(row, "as_dict"):
+        values = row.as_dict()
+    elif hasattr(row, "asDict"):
+        values = row.asDict()
+    else:
+        values = dict(row)
+    return {str(key).upper(): value for key, value in values.items()}
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def detect_luminate_share(_conn):
     """Check if the configured PostgreSQL Luminate schema is accessible."""
@@ -57,7 +66,7 @@ def load_data_from_postgres(_conn):
     }
 
     try:
-        df = _conn.query(f"SELECT * FROM {DB}.TRACKS ORDER BY TRACK_ID")
+        rows = _conn.query(f"SELECT * FROM {DB}.TRACKS ORDER BY TRACK_ID")
         data["tracks"] = [
             {
                 "track_id": r["TRACK_ID"],
@@ -68,7 +77,7 @@ def load_data_from_postgres(_conn):
                 "content_type": r["CONTENT_TYPE"],
                 "primary_album_id": r["PRIMARY_ALBUM_ID"],
             }
-            for r in df.to_dict("records")
+            for r in rows
         ]
     except Exception:
         data["tracks"] = []
@@ -77,14 +86,14 @@ def load_data_from_postgres(_conn):
     data["albums"] = []
 
     try:
-        df = _conn.query(f"SELECT * FROM {DB}.TRACK_ALBUM_BRIDGE ORDER BY TRACK_ID, ALBUM_ID")
+        rows = _conn.query(f"SELECT * FROM {DB}.TRACK_ALBUM_BRIDGE ORDER BY TRACK_ID, ALBUM_ID")
         data["track_album_bridge"] = [
             {
                 "track_id": r["TRACK_ID"],
                 "album_id": r["ALBUM_ID"],
                 "is_primary": bool(r["IS_PRIMARY"]),
             }
-            for r in df.to_dict("records")
+            for r in rows
         ]
     except Exception:
         data["track_album_bridge"] = []
@@ -104,8 +113,8 @@ def load_data_from_postgres(_conn):
     data["ambiguity_matches"] = {}
 
     try:
-        df = _conn.query(f"SELECT CONFIG_KEY, CONFIG_VALUE FROM {DB}.CONFIG")
-        for r in df.to_dict("records"):
+        rows = _conn.query(f"SELECT CONFIG_KEY, CONFIG_VALUE FROM {DB}.CONFIG")
+        for r in rows:
             val = r["CONFIG_VALUE"]
             if isinstance(val, str):
                 try:
@@ -117,8 +126,8 @@ def load_data_from_postgres(_conn):
         pass
 
     try:
-        df = _conn.query(f"SELECT NAME FROM {DB}.ARTISTS ORDER BY NAME")
-        artist_names = [r["NAME"] for r in df.to_dict("records")]
+        rows = _conn.query(f"SELECT NAME FROM {DB}.ARTISTS ORDER BY NAME")
+        artist_names = [r["NAME"] for r in rows]
         if "catalog_options" not in data or not isinstance(data.get("catalog_options"), dict):
             data["catalog_options"] = {}
         data["catalog_options"]["artists"] = artist_names
@@ -148,7 +157,7 @@ def search_artists_dropdown(_conn, term: str) -> list[str]:
     try:
         session = _conn.session()
         like_pattern = f"%{term.strip()}%"
-        df = session.sql(
+        rows = session.sql(
             f"""SELECT DISTINCT DISPLAY_ARTIST
                 FROM {LUMINATE_VIEW}
                 WHERE DISPLAY_ARTIST ILIKE :1
@@ -156,9 +165,9 @@ def search_artists_dropdown(_conn, term: str) -> list[str]:
                          LENGTH(DISPLAY_ARTIST) ASC, DISPLAY_ARTIST DESC
                 LIMIT 1""",
             params=[like_pattern, term.strip()],
-        ).to_pandas()
-        if df is not None and len(df) > 0:
-            return df["DISPLAY_ARTIST"].tolist()
+        ).collect()
+        if rows:
+            return [_row_to_dict(row).get("DISPLAY_ARTIST") for row in rows]
     except Exception:
         pass
     return []
@@ -171,7 +180,7 @@ def search_labels_dropdown(_conn, term: str) -> list[str]:
     try:
         session = _conn.session()
         like_pattern = f"%{term.strip()}%"
-        df = session.sql(
+        rows = session.sql(
             f"""SELECT DISTINCT IMPRINT
                 FROM {LUMINATE_VIEW}
                 WHERE IMPRINT ILIKE :1
@@ -179,9 +188,9 @@ def search_labels_dropdown(_conn, term: str) -> list[str]:
                          LENGTH(IMPRINT) ASC, IMPRINT ASC
                 LIMIT 1""",
             params=[like_pattern, term.strip()],
-        ).to_pandas()
-        if df is not None and len(df) > 0:
-            return df["IMPRINT"].tolist()
+        ).collect()
+        if rows:
+            return [_row_to_dict(row).get("IMPRINT") for row in rows]
     except Exception:
         pass
     return []
@@ -196,10 +205,7 @@ def _rank_results(records: list[dict]) -> list[dict]:
     """Convert raw query records into confidence-ranked ambiguity-style dicts."""
     if not records:
         return []
-    normalized = [
-        {str(key).upper(): value for key, value in record.items()}
-        for record in records
-    ]
+    normalized = [_row_to_dict(record) for record in records]
     max_count = int(normalized[0]["ALBUM_COUNT"])
     results = []
     for i, r in enumerate(normalized):
@@ -235,7 +241,7 @@ def search_catalog(_conn, search_mode: str, search_term: str) -> list[dict]:
         session = _conn.session()
 
         if search_mode == "Artist":
-            df = session.sql(
+            rows = session.sql(
                 f"""SELECT DISTINCT DISPLAY_ARTIST AS NAME,
                            COUNT(DISTINCT mrelg_id) AS ALBUM_COUNT
                     FROM {LUMINATE_VIEW}
@@ -245,9 +251,9 @@ def search_catalog(_conn, search_mode: str, search_term: str) -> list[dict]:
                     --LIMIT 20
                     """,
                 params=[like_pattern],
-            ).to_pandas()
+            ).collect()
         elif search_mode == "Label":
-            df = session.sql(
+            rows = session.sql(
                 f"""SELECT DISTINCT IMPRINT AS NAME,
                            COUNT(DISTINCT mrelg_id) AS ALBUM_COUNT
                     FROM {LUMINATE_VIEW}
@@ -257,12 +263,12 @@ def search_catalog(_conn, search_mode: str, search_term: str) -> list[dict]:
                     --LIMIT 20
                     """,
                 params=[like_pattern],
-            ).to_pandas()
+            ).collect()
         elif search_mode == "ISRC List":
             isrc_table = st.session_state.get("_isrc_temp_table")
             if not isrc_table:
                 return []
-            df = session.sql(
+            rows = session.sql(
                 f"""SELECT DISTINCT TITLE || ' — ' || DISPLAY_ARTIST AS NAME,
                            COUNT(DISTINCT v.mrelg_id) AS ALBUM_COUNT
                     FROM {LUMINATE_VIEW} v
@@ -277,14 +283,14 @@ def search_catalog(_conn, search_mode: str, search_term: str) -> list[dict]:
                     ORDER BY ALBUM_COUNT DESC
                     --LIMIT 20
                     """
-            ).to_pandas()
+            ).collect()
         else:
             return []
 
-        if df is None or len(df) == 0:
+        if not rows:
             return []
 
-        return _rank_results(df.to_dict("records"))
+        return _rank_results(rows)
 
     except Exception as e:
         return []
@@ -294,7 +300,7 @@ def search_catalog(_conn, search_mode: str, search_term: str) -> list[dict]:
 def load_bobwa_consumption_matrix(_session) -> list:
     """Load consumption matrix from SAMIS_FACT_BOBWA_AV_YEARLY_PPD, pivoted by year."""
     try:
-        df = _session.sql(f"""
+        rows = _session.sql(f"""
             SELECT
                 CALENDAR_YEAR,
                 SUM(CASE WHEN AUDIO_VIDEO_SUB_CATEGORY = 'Audio - Premium' THEN UNITS ELSE 0 END) AS AUDIO_PREMIUM,
@@ -304,9 +310,7 @@ def load_bobwa_consumption_matrix(_session) -> list:
             FROM {ANALYTICS_DATABASE}.{ANALYTICS_SCHEMA}.SAMIS_FACT_BOBWA_AV_YEARLY_PPD
             GROUP BY CALENDAR_YEAR
             ORDER BY CALENDAR_YEAR
-        """).to_pandas()
-        if df is None or len(df) == 0:
-            return []
+        """).collect()
         return [
             {
                 "bucket": str(int(row["CALENDAR_YEAR"])),
@@ -315,7 +319,7 @@ def load_bobwa_consumption_matrix(_session) -> list:
                 "video_premium": int(row["VIDEO_PREMIUM"]),
                 "video_ad_supported": int(row["VIDEO_AD_SUPPORTED"]),
             }
-            for _, row in df.iterrows()
+            for row in rows
         ]
     except Exception:
         return []
@@ -326,15 +330,13 @@ def load_available_years(_session) -> list:
     """Fetch distinct years from MONTHLY_MR_SUMMARY.MONTH_START_DATE for year filters."""
     try:
         fqn = f"{LUMINATE_DATABASE}.{LUMINATE_SCHEMA}.MONTHLY_MR_SUMMARY"
-        df = _session.sql(f"""
+        rows = _session.sql(f"""
             SELECT DISTINCT EXTRACT(YEAR FROM MONTH_START_DATE) AS YR
             FROM {fqn}
             WHERE MONTH_START_DATE IS NOT NULL
             ORDER BY YR
-        """).to_pandas()
-        if df is None or len(df) == 0:
-            return []
-        return [int(r) for r in df["YR"].tolist()]
+        """).collect()
+        return [int(row["YR"]) for row in rows]
     except Exception:
         return []
 
@@ -343,7 +345,7 @@ def load_available_years(_session) -> list:
 def load_bobwa_ppd(_session) -> dict:
     """Load PPD (wholesale_value / units) by year, country, and sub-category from BOBWA."""
     try:
-        df = _session.sql(f"""
+        rows = _session.sql(f"""
             SELECT
                 CALENDAR_YEAR,
                 COUNTRY_CODE,
@@ -358,13 +360,9 @@ def load_bobwa_ppd(_session) -> dict:
             FROM {ANALYTICS_DATABASE}.{ANALYTICS_SCHEMA}.SAMIS_FACT_BOBWA_AV_YEARLY_PPD
             GROUP BY CALENDAR_YEAR, COUNTRY_CODE, AFFILIATE_COUNTRY, AUDIO_VIDEO_SUB_CATEGORY
             ORDER BY CALENDAR_YEAR, COUNTRY_CODE, AUDIO_VIDEO_SUB_CATEGORY
-        """).to_pandas()
-        if df is None or len(df) == 0:
+        """).collect()
+        if not rows:
             return {}
-
-        # Ensure numeric types returned by PostgreSQL are chart-compatible.
-        for col in ["CALENDAR_YEAR", "TOTAL_UNITS", "TOTAL_WHOLESALE_VALUE", "PPD"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
         seg_map = {
             "Audio - Premium": "audio_premium",
@@ -374,38 +372,38 @@ def load_bobwa_ppd(_session) -> dict:
         }
 
         # Global PPD splits (current = latest year, future = 5% projected increase)
-        latest_year = int(df["CALENDAR_YEAR"].max())
-        latest = df[df["CALENDAR_YEAR"] == latest_year]
+        latest_year = max(int(row["CALENDAR_YEAR"] or 0) for row in rows)
+        latest = [row for row in rows if int(row["CALENDAR_YEAR"] or 0) == latest_year]
         current_splits = {}
         for sub_cat, key in seg_map.items():
-            seg_rows = latest[latest["AUDIO_VIDEO_SUB_CATEGORY"] == sub_cat]
-            total_units = float(seg_rows["TOTAL_UNITS"].sum())
-            total_value = float(seg_rows["TOTAL_WHOLESALE_VALUE"].sum())
+            seg_rows = [row for row in latest if row["AUDIO_VIDEO_SUB_CATEGORY"] == sub_cat]
+            total_units = sum(float(row["TOTAL_UNITS"] or 0) for row in seg_rows)
+            total_value = sum(float(row["TOTAL_WHOLESALE_VALUE"] or 0) for row in seg_rows)
             current_splits[key] = round(total_value / total_units, 6) if total_units > 0 else 0.0
         future_splits = {k: round(v * 1.05, 6) for k, v in current_splits.items()}
 
         # PPD by year and sub-category (for chart display)
         ppd_by_year = []
-        for year in sorted(df["CALENDAR_YEAR"].unique()):
-            yr_df = df[df["CALENDAR_YEAR"] == year]
+        for year in sorted({int(row["CALENDAR_YEAR"] or 0) for row in rows}):
+            yr_rows = [row for row in rows if int(row["CALENDAR_YEAR"] or 0) == year]
             row = {"bucket": str(int(year))}
             for sub_cat, key in seg_map.items():
-                seg = yr_df[yr_df["AUDIO_VIDEO_SUB_CATEGORY"] == sub_cat]
-                u = float(seg["TOTAL_UNITS"].sum())
-                v = float(seg["TOTAL_WHOLESALE_VALUE"].sum())
+                seg = [item for item in yr_rows if item["AUDIO_VIDEO_SUB_CATEGORY"] == sub_cat]
+                u = sum(float(item["TOTAL_UNITS"] or 0) for item in seg)
+                v = sum(float(item["TOTAL_WHOLESALE_VALUE"] or 0) for item in seg)
                 row[key] = round(v / u, 6) if u > 0 else 0.0
             ppd_by_year.append(row)
 
         # PPD by country and sub-category (latest year, for territory table)
         ppd_by_country = []
-        for _, row in latest.iterrows():
+        for row in latest:
             ppd_by_country.append({
                 "country_code": row["COUNTRY_CODE"],
                 "country_name": row["AFFILIATE_COUNTRY"],
                 "sub_category": seg_map.get(row["AUDIO_VIDEO_SUB_CATEGORY"], row["AUDIO_VIDEO_SUB_CATEGORY"]),
-                "ppd": round(float(row["PPD"]), 6),
-                "units": int(row["TOTAL_UNITS"]),
-                "wholesale_value": round(float(row["TOTAL_WHOLESALE_VALUE"]), 2),
+                "ppd": round(float(row["PPD"] or 0), 6),
+                "units": int(row["TOTAL_UNITS"] or 0),
+                "wholesale_value": round(float(row["TOTAL_WHOLESALE_VALUE"] or 0), 2),
             })
 
         return {
@@ -437,18 +435,15 @@ def compute_analytics_from_monthly_detail(_session, step2_table: str, _albums_js
 
     albums = _json.loads(_albums_json)
     current_year = datetime.now().year
-    has_streaming_data = False
-    df = None
+    rows = []
 
     try:
-        df = pull_monthly_detail(_session, step2_table).to_pandas()
-        if df is not None and len(df) > 100:
-            has_streaming_data = True
+        rows = pull_monthly_detail(_session, step2_table).collect()
     except Exception:
         pass
 
-    if has_streaming_data:
-        return _compute_from_streaming_data(df, albums, current_year)
+    if len(rows) > 100:
+        return _compute_from_streaming_data(rows, albums, current_year)
     else:
         return _compute_from_album_metadata(albums, current_year)
 
@@ -624,13 +619,22 @@ def _compute_from_album_metadata(albums: list, current_year: int) -> dict:
     return result
 
 
-def _compute_from_streaming_data(df, albums: list, current_year: int) -> dict:
-    """Compute analytics from actual Luminate streaming data."""
-    from datetime import datetime
-    result = {}
+def _compute_from_streaming_data(rows: list[dict], albums: list, current_year: int) -> dict:
+    """Compute analytics from actual Luminate streaming records."""
+    from collections import defaultdict
+    from datetime import date, datetime
 
-    # --- Territories ---
-    countries_raw = sorted(df["COUNTRY_CODE"].dropna().unique().tolist())
+    def year_month(value):
+        if isinstance(value, (date, datetime)):
+            return value.year, value.month
+        try:
+            parsed = date.fromisoformat(str(value)[:10])
+            return parsed.year, parsed.month
+        except (TypeError, ValueError):
+            return 0, 0
+
+    records = [_row_to_dict(row) for row in rows]
+    countries_raw = sorted({r["COUNTRY_CODE"] for r in records if r.get("COUNTRY_CODE")})
     region_map_codes = {
         "Latin America": ["MX", "CO", "AR", "BR", "CL", "PE", "EC", "VE", "UY", "PY", "BO", "CR", "PA", "DO", "GT", "HN", "SV", "NI", "CU", "PR"],
         "North America": ["US", "CA"],
@@ -638,252 +642,171 @@ def _compute_from_streaming_data(df, albums: list, current_year: int) -> dict:
         "Asia Pacific": ["JP", "KR", "AU", "NZ", "IN", "ID", "TH", "PH", "MY", "SG", "TW", "HK", "VN"],
         "Middle East & Africa": ["ZA", "NG", "KE", "EG", "AE", "SA", "IL", "TR"],
     }
-    # Convert country codes to full names
-    countries_named = [COUNTRY_CODE_TO_NAME.get(c, c) for c in countries_raw]
-
-    regions_out = {}
-    for region_name, codes in region_map_codes.items():
-        matched = [COUNTRY_CODE_TO_NAME.get(c, c) for c in codes if c in countries_raw]
-        if matched:
-            regions_out[region_name] = matched
-
-    result["territories"] = {
-        "countries": countries_named,
-        "regions": regions_out,
+    regions_out = {
+        region: [COUNTRY_CODE_TO_NAME.get(code, code) for code in codes if code in countries_raw]
+        for region, codes in region_map_codes.items()
     }
+    regions_out = {region: countries for region, countries in regions_out.items() if countries}
+    result = {"territories": {
+        "countries": [COUNTRY_CODE_TO_NAME.get(code, code) for code in countries_raw],
+        "regions": regions_out,
+    }}
 
-    # --- Consumption Matrix (by half-year bucket) ---
-    df["MONTH_START_DATE"] = pd.to_datetime(df["MONTH_START_DATE"])
-    # Filter out 'Total' and null content types to avoid double-counting
-    df = df[~df["CONTENT_TYPE"].isin(["Total", "LUMINATE_NULL"])].copy()
-    df = df[df["COMMERCIAL_MODEL"] != "LUMINATE_NULL"].copy()
-
-    # If filtering removed all rows, fall back to album-based computation
-    if df.empty:
+    records = [
+        row for row in records
+        if row.get("CONTENT_TYPE") not in ("Total", "LUMINATE_NULL")
+        and row.get("COMMERCIAL_MODEL") != "LUMINATE_NULL"
+    ]
+    if not records:
         return _compute_from_album_metadata(albums, current_year)
 
-    df["YEAR"] = df["MONTH_START_DATE"].dt.year
-    df["HALF"] = df["MONTH_START_DATE"].dt.month.apply(lambda m: "Jan-Jun" if m <= 6 else "Jul-Dec")
-    df["YEAR"] = df["YEAR"].astype(str)
-    df["BUCKET"] = df.apply(lambda r: r["YEAR"] if int(r["YEAR"]) == current_year else r["YEAR"] + " " + r["HALF"], axis=1)
+    segment_keys = ("audio_premium", "audio_ad_supported", "video_premium", "video_ad_supported")
+    by_bucket = defaultdict(lambda: defaultdict(float))
+    by_year = defaultdict(float)
+    by_release_year = defaultdict(float)
+    by_release_consumption = defaultdict(float)
+    by_release_consumption_segment = defaultdict(float)
+    by_album_streams = defaultdict(float)
+    by_album_recordings = defaultdict(set)
+    by_track = defaultdict(lambda: {"streams": 0.0, "months": set()})
+    album_year_map = {str(a["album_id"]).strip(): int(a.get("release_year", 0) or 0) for a in albums}
+    total_streams = 0.0
+    local_streams = 0.0
+    enriched_rows = []
 
-    # Classify content_type and commercial_model
-    # Luminate values: CONTENT_TYPE = Audio|Video|Total|LUMINATE_NULL
-    #                  COMMERCIAL_MODEL = Premium|AdSupported|LUMINATE_NULL
-    df["CT_LOWER"] = df["CONTENT_TYPE"].str.lower().fillna("")
-    df["CM_LOWER"] = df["COMMERCIAL_MODEL"].str.lower().fillna("")
+    for row in records:
+        month_year, month = year_month(row.get("MONTH_START_DATE"))
+        if not month_year:
+            continue
+        quantity = float(row.get("QUANTITY") or 0)
+        content_type = str(row.get("CONTENT_TYPE") or "").lower()
+        commercial_model = str(row.get("COMMERCIAL_MODEL") or "").lower()
+        is_video = content_type == "video" or "video" in content_type
+        is_premium = commercial_model == "premium" or "premium" in commercial_model
+        segment = (
+            "video_premium" if is_video and is_premium else
+            "video_ad_supported" if is_video else
+            "audio_premium" if is_premium else
+            "audio_ad_supported"
+        )
+        bucket = str(month_year) if month_year == current_year else f"{month_year} {'Jan-Jun' if month <= 6 else 'Jul-Dec'}"
+        by_bucket[bucket][segment] += quantity
+        by_year[month_year] += quantity
+        country = row.get("COUNTRY_CODE")
+        total_streams += quantity
+        if country in ("MX", "US", "CO"):
+            local_streams += quantity
 
-    def _classify_segment(row):
-        ct = row["CT_LOWER"]
-        cm = row["CM_LOWER"]
-        is_audio = ct in ("audio", "total", "") or "audio" in ct
-        is_video = ct == "video" or "video" in ct
-        is_premium = cm == "premium" or "premium" in cm
-        # "adsupported" or "ad-supported" or "ad_supported" or anything not premium
-        is_ad = not is_premium
+        release_group_id = str(row.get("RELEASE_GROUP_ID") or "").strip()
+        first_stream_year, _ = year_month(row.get("FIRST_STREAM_DATE"))
+        release_year = album_year_map.get(release_group_id) or first_stream_year
+        recording_id = row.get("RECORDING_ID")
+        by_album_streams[release_group_id] += quantity
+        if recording_id is not None:
+            by_album_recordings[release_group_id].add(recording_id)
+        if release_year > 0:
+            by_release_year[release_year] += quantity
+            by_release_consumption[(release_year, month_year)] += quantity
+            by_release_consumption_segment[(release_year, month_year, segment)] += quantity
 
-        if is_video and is_premium:
-            return "video_premium"
-        elif is_video and is_ad:
-            return "video_ad_supported"
-        elif is_premium:
-            return "audio_premium"
-        else:
-            return "audio_ad_supported"
+        if release_year >= current_year - 3:
+            track_key = (recording_id, row.get("RECORDING_TITLE"), release_year)
+            track = by_track[track_key]
+            track["streams"] += quantity
+            track["months"].add(str(row.get("MONTH_START_DATE")))
+        enriched_rows.append((row, month_year, release_year, segment))
 
-    df["SEGMENT"] = df.apply(_classify_segment, axis=1)
+    if not enriched_rows:
+        return _compute_from_album_metadata(albums, current_year)
 
-    buckets_sorted = sorted(df["BUCKET"].unique())
-    matrix_rows = []
-    for bucket in buckets_sorted:
-        bdf = df[df["BUCKET"] == bucket]
-        matrix_rows.append({
-            "bucket": bucket,
-            "audio_premium": int(bdf[bdf["SEGMENT"] == "audio_premium"]["QUANTITY"].sum()),
-            "audio_ad_supported": int(bdf[bdf["SEGMENT"] == "audio_ad_supported"]["QUANTITY"].sum()),
-            "video_premium": int(bdf[bdf["SEGMENT"] == "video_premium"]["QUANTITY"].sum()),
-            "video_ad_supported": int(bdf[bdf["SEGMENT"] == "video_ad_supported"]["QUANTITY"].sum()),
-        })
-    result["consumption_matrix"] = matrix_rows
-
-    # --- Growth Trend (yearly) ---
-    yearly = df.groupby("YEAR")["QUANTITY"].sum().sort_index()
+    result["consumption_matrix"] = [
+        {"bucket": bucket, **{key: int(values[key]) for key in segment_keys}}
+        for bucket, values in sorted(by_bucket.items())
+    ]
     growth_trend = []
-    prev = None
-    for year, total in yearly.items():
-        yoy = round(((total - prev) / prev * 100), 1) if prev and prev > 0 else 0
-        growth_trend.append({"year": int(year), "yoy_growth_pct": yoy})
-        prev = total
+    previous_total = None
+    for year, total in sorted(by_year.items()):
+        growth = round((total - previous_total) / previous_total * 100, 1) if previous_total else 0
+        growth_trend.append({"year": int(year), "yoy_growth_pct": growth})
+        previous_total = total
     result["growth_trend"] = growth_trend
-
-    # --- Market Growth ---
-    if len(growth_trend) >= 2:
-        artist_growth = growth_trend[-1]["yoy_growth_pct"]
-    else:
-        artist_growth = 0
-    market_growth_pct = 7.0  # configurable baseline
     result["market_growth"] = {
-        "artist_growth_pct": artist_growth,
-        "market_growth_pct": market_growth_pct,
+        "artist_growth_pct": growth_trend[-1]["yoy_growth_pct"] if len(growth_trend) >= 2 else 0,
+        "market_growth_pct": 7.0,
     }
 
-    # --- Catalog Age Split ---
-    current_year = datetime.now().year
     album_years = [a.get("release_year", 0) for a in albums if a.get("release_year", 0) > 0]
     if album_years:
-        older_count = sum(1 for y in album_years if (current_year - y) > 10)
-        recent_count = sum(1 for y in album_years if (current_year - y) <= 3)
-        total_albums = len(album_years)
         result["catalog_age_split"] = {
-            "older_than_10y_pct": round(older_count / total_albums * 100),
-            "recent_releases_pct": round(recent_count / total_albums * 100),
+            "older_than_10y_pct": round(sum(current_year - y > 10 for y in album_years) / len(album_years) * 100),
+            "recent_releases_pct": round(sum(current_year - y <= 3 for y in album_years) / len(album_years) * 100),
         }
     else:
         result["catalog_age_split"] = {"older_than_10y_pct": 0, "recent_releases_pct": 0}
 
-    # --- Release Year Analysis ---
-    # Group streams by release year of the release group
-    # Ensure type consistency for mapping (both as strings)
-    df["RELEASE_GROUP_ID_STR"] = df["RELEASE_GROUP_ID"].astype(str).str.strip()
-    album_year_map = {str(a["album_id"]).strip(): int(a.get("release_year", 0)) for a in albums}
-
-    df["ALBUM_YEAR"] = df["RELEASE_GROUP_ID_STR"].map(album_year_map)
-    # Fallback: use FIRST_STREAM_DATE year if mapping fails
-    df["FIRST_STREAM_DATE"] = pd.to_datetime(df["FIRST_STREAM_DATE"], errors="coerce")
-    df["RELEASE_YEAR_GRP"] = df["FIRST_STREAM_DATE"].dt.year.fillna(0).astype(int)
-    df["ALBUM_YEAR"] = df["ALBUM_YEAR"].fillna(df["RELEASE_YEAR_GRP"]).astype(int)
-
-    ry_grouped = df[df["ALBUM_YEAR"] > 0].groupby("ALBUM_YEAR")["QUANTITY"].sum().sort_index()
-    # PPD rate estimate (streams to revenue)
-    avg_ppd = 0.003  # $0.003 per stream average
-    ry_analysis = []
-    prev_streams = None
-    for year, streams in ry_grouped.items():
-        rev = float(streams) * avg_ppd
-        yoy = round(((streams - prev_streams) / prev_streams * 100), 1) if prev_streams and prev_streams > 0 else 0
-        ry_analysis.append({
-            "bucket": str(int(year)),
+    avg_ppd = 0.003
+    release_year_analysis = []
+    previous_streams = None
+    for year, streams in sorted(by_release_year.items()):
+        growth = round((streams - previous_streams) / previous_streams * 100, 1) if previous_streams else 0
+        release_year_analysis.append({
+            "bucket": str(year),
             "consumption_streams": int(streams),
-            "revenue_usd": round(rev, 2),
-            "yoy_growth_pct": yoy,
+            "revenue_usd": round(streams * avg_ppd, 2),
+            "yoy_growth_pct": growth,
         })
-        prev_streams = streams
-    result["release_year_analysis"] = ry_analysis
-
-    # --- Release Year × Consumption Year cross-tab ---
-    # For each release year, show streams broken down by consumption year and segment
-    # This enables: "select 2023 releases, show their yearly consumption from 2023 to present"
-    ry_valid = df[df["ALBUM_YEAR"] > 0].copy()
-    ry_valid["CONSUMPTION_YEAR"] = ry_valid["MONTH_START_DATE"].dt.year.astype(int)
-
-    # Total streams cross-tab (for step 6)
-    ry_cross = ry_valid.groupby(["ALBUM_YEAR", "CONSUMPTION_YEAR"])["QUANTITY"].sum().reset_index()
-    ry_consumption_list = []
-    for _, row in ry_cross.iterrows():
-        ry_consumption_list.append({
-            "release_year": int(row["ALBUM_YEAR"]),
-            "consumption_year": int(row["CONSUMPTION_YEAR"]),
-            "streams": int(row["QUANTITY"]),
-            "revenue_usd": round(float(row["QUANTITY"]) * avg_ppd, 2),
-        })
-    result["release_year_consumption"] = ry_consumption_list
-
-    # Segment-level cross-tab (for step 5 consumption matrix by release year)
-    if "SEGMENT" in ry_valid.columns:
-        seg_cross = ry_valid.groupby(["ALBUM_YEAR", "CONSUMPTION_YEAR", "SEGMENT"])["QUANTITY"].sum().reset_index()
-        seg_list = []
-        for _, row in seg_cross.iterrows():
-            seg_list.append({
-                "release_year": int(row["ALBUM_YEAR"]),
-                "consumption_year": int(row["CONSUMPTION_YEAR"]),
-                "segment": row["SEGMENT"],
-                "streams": int(row["QUANTITY"]),
-            })
-        result["release_year_consumption_segments"] = seg_list
-    else:
-        result["release_year_consumption_segments"] = []
-
-    # --- Local/ROW Revenue ---
-    # Default local territories
-    local_codes = ["MX", "US", "CO"]
-    total_streams = int(df["QUANTITY"].sum())
-    local_streams = int(df[df["COUNTRY_CODE"].isin(local_codes)]["QUANTITY"].sum())
-    row_streams = total_streams - local_streams
+        previous_streams = streams
+    result["release_year_analysis"] = release_year_analysis
+    result["release_year_consumption"] = [
+        {"release_year": release_year, "consumption_year": consumption_year,
+         "streams": int(streams), "revenue_usd": round(streams * avg_ppd, 2)}
+        for (release_year, consumption_year), streams in sorted(by_release_consumption.items())
+    ]
+    result["release_year_consumption_segments"] = [
+        {"release_year": release_year, "consumption_year": consumption_year,
+         "segment": segment, "streams": int(streams)}
+        for (release_year, consumption_year, segment), streams in sorted(by_release_consumption_segment.items())
+    ]
     result["local_row_revenue"] = {
         "local_revenue_usd": round(local_streams * avg_ppd, 2),
-        "row_revenue_usd": round(row_streams * avg_ppd, 2),
+        "row_revenue_usd": round((total_streams - local_streams) * avg_ppd, 2),
     }
-
-    # --- PPD splits ---
-    segment_streams = df.groupby("SEGMENT")["QUANTITY"].sum()
-    ppd_rates = {
+    current_splits = {
         "audio_premium": 0.0038,
         "audio_ad_supported": 0.0015,
         "video_premium": 0.0020,
         "video_ad_supported": 0.0007,
     }
-    current_splits = {}
-    future_splits = {}
-    for seg, rate in ppd_rates.items():
-        current_splits[seg] = rate
-        future_splits[seg] = round(rate * 1.05, 6)  # 5% projected increase
-    result["ppd"] = {"current_splits": current_splits, "future_splits": future_splits}
+    result["ppd"] = {
+        "current_splits": current_splits,
+        "future_splits": {key: round(value * 1.05, 6) for key, value in current_splits.items()},
+    }
+    result["albums"] = [
+        {
+            **album,
+            "total_consumption_streams": int(by_album_streams[str(album["album_id"]).strip()]),
+            "current_revenue_usd": round(by_album_streams[str(album["album_id"]).strip()] * avg_ppd, 2),
+            "track_count": len(by_album_recordings[str(album["album_id"]).strip()]) or album.get("track_count", 0),
+        }
+        for album in albums
+    ]
 
-    # --- Enrich albums with per-album streams and revenue ---
-    album_streams = df.groupby("RELEASE_GROUP_ID_STR")["QUANTITY"].sum()
-    enriched_albums = []
-    for a in albums:
-        aid = str(a["album_id"]).strip()
-        streams = int(album_streams.get(aid, 0))
-        track_count_from_data = int(df[df["RELEASE_GROUP_ID_STR"] == aid]["RECORDING_ID"].nunique())
-        enriched_albums.append({
-            **a,
-            "total_consumption_streams": streams,
-            "current_revenue_usd": round(streams * avg_ppd, 2),
-            "track_count": track_count_from_data if track_count_from_data > 0 else a.get("track_count", 0),
+    tracks = sorted(by_track.items(), key=lambda item: item[1]["streams"], reverse=True)[:30]
+    new_release_tracks = []
+    for (recording_id, title, release_year), performance in tracks:
+        months = len(performance["months"])
+        total = performance["streams"]
+        first_12m = total / months * min(months, 12) / 1_000_000 if months else 0
+        flag = "Outlier" if first_12m > 50 else "Incomplete Data" if months < 6 else "Normal"
+        new_release_tracks.append({
+            "track_id": str(recording_id),
+            "track_name": str(title or "Unknown"),
+            "release_year": int(release_year),
+            "first_12m_streams_millions": round(first_12m, 2),
+            "months_of_data": months,
+            "flag": flag,
         })
-    result["albums"] = enriched_albums
-
-    # --- New Release Tracks ---
-    # Find recordings from last 3 years with streaming performance
-    cutoff_year = current_year - 3
-    recent_df = df[df["RELEASE_YEAR_GRP"] >= cutoff_year]
-    if not recent_df.empty:
-        track_perf = recent_df.groupby(["RECORDING_ID", "RECORDING_TITLE", "RELEASE_YEAR_GRP"]).agg(
-            total_streams=("QUANTITY", "sum"),
-            months=("MONTH_START_DATE", "nunique"),
-        ).reset_index()
-        track_perf = track_perf.sort_values("total_streams", ascending=False).head(30)
-
-        new_release_tracks = []
-        for _, row in track_perf.iterrows():
-            months = int(row["months"])
-            total_s = int(row["total_streams"])
-            # Estimate first 12 months
-            if months > 0:
-                monthly_avg = total_s / months
-                first_12m = monthly_avg * min(months, 12) / 1_000_000
-            else:
-                first_12m = 0
-            # Assign flags
-            flag = "Normal"
-            if first_12m > 50:
-                flag = "Outlier"
-            elif months < 6:
-                flag = "Incomplete Data"
-
-            new_release_tracks.append({
-                "track_id": str(row["RECORDING_ID"]),
-                "track_name": str(row["RECORDING_TITLE"] or "Unknown"),
-                "release_year": int(row["RELEASE_YEAR_GRP"]),
-                "first_12m_streams_millions": round(first_12m, 2),
-                "months_of_data": months,
-                "flag": flag,
-            })
-        result["new_release_tracks"] = new_release_tracks
-    else:
-        result["new_release_tracks"] = []
-
+    result["new_release_tracks"] = new_release_tracks
     return result
 
 

@@ -1,7 +1,9 @@
 """Step 1: Catalog Select — search mode and text input only (no SQL queries)."""
 
+import csv
+import io
+
 import streamlit as st
-import pandas as pd
 
 
 def render_step1(data, conn, session):
@@ -31,15 +33,17 @@ def render_step1(data, conn, session):
         uploaded = st.file_uploader("Upload ISRC CSV", type=["csv", "txt"], key="isrc_upload")
         if uploaded is not None:
             try:
-                df = pd.read_csv(uploaded)
-                isrc_col = None
-                for c in df.columns:
-                    if "isrc" in c.lower():
-                        isrc_col = c
-                        break
-                if isrc_col is None:
-                    isrc_col = df.columns[0]
-                isrc_list = df[isrc_col].dropna().astype(str).tolist()
+                text = uploaded.getvalue().decode("utf-8-sig")
+                reader = csv.DictReader(io.StringIO(text))
+                columns = reader.fieldnames or []
+                if not columns:
+                    raise ValueError("The CSV file has no header row.")
+                isrc_col = next((column for column in columns if "isrc" in column.lower()), columns[0])
+                isrc_list = [
+                    value.strip()
+                    for row in reader
+                    if (value := str(row.get(isrc_col) or "").strip())
+                ]
                 st.session_state["search_term"] = f"ISRC upload ({len(isrc_list)} codes)"
                 st.session_state["_isrc_list"] = isrc_list
                 st.info(f"Loaded {len(isrc_list)} ISRCs from column '{isrc_col}'.")

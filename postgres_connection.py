@@ -7,7 +7,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import psycopg
 from psycopg.rows import dict_row
 
@@ -80,14 +79,13 @@ def _parameters(sql: str, params: list[Any] | tuple[Any, ...] | None) -> tuple[s
 
 class PostgresResult:
     def __init__(self, rows: list[dict[str, Any]]):
-        self._rows = rows
+        self._rows = [
+            {str(key).upper(): value for key, value in row.items()}
+            for row in rows
+        ]
 
     def collect(self) -> list[dict[str, Any]]:
         return self._rows
-
-    def to_pandas(self) -> pd.DataFrame:
-        return pd.DataFrame(self._rows)
-
 
 class PostgresSession:
     def __init__(self, connection: psycopg.Connection[Any]):
@@ -135,5 +133,5 @@ class PostgresConnection:
     def session(self) -> PostgresSession:
         return PostgresSession(self._connection)
 
-    def query(self, sql: str) -> pd.DataFrame:
-        return self.session().sql(sql).to_pandas()
+    def query(self, sql: str) -> list[dict[str, Any]]:
+        return self.session().sql(sql).collect()

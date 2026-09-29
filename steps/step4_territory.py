@@ -1,7 +1,6 @@
 """Step 4: Territory Map — select local territories."""
 
 import streamlit as st
-import pandas as pd
 
 
 def render_step4(data, conn, session):
@@ -53,5 +52,4 @@ def render_step4(data, conn, session):
             "RoW %": pct_r,
         })
 
-    df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True, height=400)
+    st.dataframe(rows, use_container_width=True, hide_index=True, height=400)

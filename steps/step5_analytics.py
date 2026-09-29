@@ -1,8 +1,15 @@
 """Step 5: Catalog Analytics — KPIs, tabbed charts."""
 
 import streamlit as st
-import pandas as pd
 import altair as alt
+
+
+def _melt_records(rows, value_columns):
+    return [
+        {"bucket": row.get("bucket"), "Series": column, "Value": row.get(column)}
+        for row in rows
+        for column in value_columns
+    ]
 
 
 def render_step5(data, conn, session):
@@ -26,15 +33,9 @@ def render_step5(data, conn, session):
     tabs = st.tabs(["All", "Audio", "Video", "Premium", "Ad Supported", "Growth Trend"])
 
     if matrix:
-        df_matrix = pd.DataFrame(matrix)
-
         with tabs[0]:
             # Multi-line chart for all series
-            melted = df_matrix.melt(
-                id_vars=["bucket"],
-                value_vars=["audio_premium", "audio_ad_supported", "video_premium", "video_ad_supported"],
-                var_name="Series", value_name="Value"
-            )
+            melted = _melt_records(matrix, ["audio_premium", "audio_ad_supported", "video_premium", "video_ad_supported"])
             color_scale = alt.Scale(
                 domain=["audio_premium", "audio_ad_supported", "video_premium", "video_ad_supported"],
                 range=["#E1261C", "#8A8A8A", "#2A63C7", "#B9861F"]
@@ -47,8 +48,7 @@ def render_step5(data, conn, session):
             st.altair_chart(chart, use_container_width=True)
 
         with tabs[1]:
-            melted = df_matrix.melt(id_vars=["bucket"], value_vars=["audio_premium", "audio_ad_supported"],
-                                    var_name="Series", value_name="Value")
+            melted = _melt_records(matrix, ["audio_premium", "audio_ad_supported"])
             chart = alt.Chart(melted).mark_bar().encode(
                 x=alt.X("bucket:N", title="Period"),
                 y=alt.Y("Value:Q", title="Streams", stack="zero"),
@@ -57,8 +57,7 @@ def render_step5(data, conn, session):
             st.altair_chart(chart, use_container_width=True)
 
         with tabs[2]:
-            melted = df_matrix.melt(id_vars=["bucket"], value_vars=["video_premium", "video_ad_supported"],
-                                    var_name="Series", value_name="Value")
+            melted = _melt_records(matrix, ["video_premium", "video_ad_supported"])
             chart = alt.Chart(melted).mark_bar().encode(
                 x=alt.X("bucket:N", title="Period"),
                 y=alt.Y("Value:Q", title="Streams", stack="zero"),
@@ -67,8 +66,7 @@ def render_step5(data, conn, session):
             st.altair_chart(chart, use_container_width=True)
 
         with tabs[3]:
-            melted = df_matrix.melt(id_vars=["bucket"], value_vars=["audio_premium", "video_premium"],
-                                    var_name="Series", value_name="Value")
+            melted = _melt_records(matrix, ["audio_premium", "video_premium"])
             chart = alt.Chart(melted).mark_bar().encode(
                 x=alt.X("bucket:N", title="Period"),
                 y=alt.Y("Value:Q", title="Streams"),
@@ -78,8 +76,7 @@ def render_step5(data, conn, session):
             st.altair_chart(chart, use_container_width=True)
 
         with tabs[4]:
-            melted = df_matrix.melt(id_vars=["bucket"], value_vars=["audio_ad_supported", "video_ad_supported"],
-                                    var_name="Series", value_name="Value")
+            melted = _melt_records(matrix, ["audio_ad_supported", "video_ad_supported"])
             chart = alt.Chart(melted).mark_bar().encode(
                 x=alt.X("bucket:N", title="Period"),
                 y=alt.Y("Value:Q", title="Streams"),
@@ -90,8 +87,7 @@ def render_step5(data, conn, session):
 
     with tabs[5]:
         if growth_trend:
-            df_growth = pd.DataFrame(growth_trend)
-            chart = alt.Chart(df_growth).mark_line(point=True, color="#E1261C").encode(
+            chart = alt.Chart(growth_trend).mark_line(point=True, color="#E1261C").encode(
                 x=alt.X("year:O", title="Year"),
                 y=alt.Y("yoy_growth_pct:Q", title="YoY Growth %"),
             ).properties(height=280)

@@ -1,8 +1,8 @@
 """Step 8: Corporate Export — summary table and Excel download."""
 
 import io
+from openpyxl import Workbook
 import streamlit as st
-import pandas as pd
 
 
 def render_step8(data, conn, session):
@@ -18,10 +18,8 @@ def render_step8(data, conn, session):
     c2.metric("Local / ROW Split", f"{export.get('Local Revenue (USD)', '')} / {export.get('ROW Revenue (USD)', '')}")
 
     # Summary table
-    summary_df = pd.DataFrame(
-        [{"Corporate Template Field": k, "Value": str(v)} for k, v in export.items()]
-    )
-    st.dataframe(summary_df, use_container_width=True, hide_index=True, height=450)
+    summary_rows = [{"Corporate Template Field": k, "Value": str(v)} for k, v in export.items()]
+    st.dataframe(summary_rows, use_container_width=True, hide_index=True, height=450)
 
     # Excel download
     st.markdown("#### Export")
@@ -79,24 +77,30 @@ def _compute_export(data):
 def _build_excel(export_dict, included_albums, data):
     """Generate an Excel file in memory and return bytes."""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        # Sheet 1: Corporate Template Inputs
-        summary_df = pd.DataFrame(
-            [{"Corporate Template Field": k, "Value": str(v)} for k, v in export_dict.items()]
-        )
-        summary_df.to_excel(writer, sheet_name="Corporate Template Inputs", index=False)
+    workbook = Workbook()
+    summary_sheet = workbook.active
+    summary_sheet.title = "Corporate Template Inputs"
+    summary_sheet.append(["Corporate Template Field", "Value"])
+    for key, value in export_dict.items():
+        summary_sheet.append([key, str(value)])
 
-        # Sheet 2: Album Detail
-        if included_albums:
-            album_df = pd.DataFrame(included_albums)[
-                [c for c in ["album_name", "release_type", "release_year", "track_count", "current_revenue_usd"]
-                 if c in pd.DataFrame(included_albums).columns]
-            ]
-            album_df.to_excel(writer, sheet_name="Album Detail", index=False)
+    album_columns = [
+        column for column in ["album_name", "release_type", "release_year", "track_count", "current_revenue_usd"]
+        if any(column in album for album in included_albums)
+    ]
+    if included_albums:
+        album_sheet = workbook.create_sheet("Album Detail")
+        album_sheet.append(album_columns)
+        for album in included_albums:
+            album_sheet.append([album.get(column) for column in album_columns])
 
-        # Sheet 3: Release-Year Analysis
-        ry = data.get("release_year_analysis", [])
-        if ry:
-            pd.DataFrame(ry).to_excel(writer, sheet_name="Release-Year Analysis", index=False)
+    release_year_rows = data.get("release_year_analysis", [])
+    if release_year_rows:
+        release_year_sheet = workbook.create_sheet("Release-Year Analysis")
+        columns = list(release_year_rows[0])
+        release_year_sheet.append(columns)
+        for row in release_year_rows:
+            release_year_sheet.append([row.get(column) for column in columns])
 
+    workbook.save(output)
     return output.getvalue()
