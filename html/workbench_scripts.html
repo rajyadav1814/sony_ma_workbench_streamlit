@@ -477,28 +477,11 @@
           style="font-size:1.15rem; padding:14px; border-radius:12px;">
     </div>`;
       } else if (mode === "Label") {
-        const labelList = DATA.dropdown_results || [];
-        const hasResults = labelList.length > 0 && !state._dropdownSelected;
-        const hasInput = state.searchTerm && state.searchTerm.length >= 2;
-        let listContent = '';
-        if (hasResults) {
-          listContent = labelList.map(a => `<div class="autocomplete-item" onmousedown="acSelect('searchTermSel','acListLabel','${esc(a).replace(/'/g, "\\'")}',dispatchSearchAndRender)"><span class="ac-icon">${esc(a)[0]}</span>${esc(a)}</div>`).join('');
-        } else if (hasInput) {
-          listContent = '<div class="ac-no-result">Press Enter to search</div>';
-        } else {
-          listContent = '<div class="ac-no-result">Type at least 2 characters, then press Enter</div>';
-        }
         searchField = `<div class="field"><label class="field-label" for="searchTermSel" style="text-align:left; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; font-size: 0.75rem; margin-bottom: 12px; color: var(--text-mute);">Label Name</label>
-      <div class="autocomplete-wrap" id="acWrapLabel">
-        <input type="text" id="searchTermSel" value="${esc(state.searchTerm)}" placeholder="Type label name and press Enter..." autocomplete="organization"
+      <input type="text" id="searchTermSel" value="${esc(state.searchTerm)}" placeholder="Type label name and press Enter..." autocomplete="organization"
           oninput="acInputChanged('searchTermSel')"
-          onclick="acToggle('acListLabel')"
-          onkeydown="acSearchOnEnter(event,'acListLabel','searchTermSel','Label')"
+          onkeydown="if (event.key === 'Enter') acSearchOnEnter(event, '', 'searchTermSel', 'Label')"
           style="font-size:1.15rem; padding:14px; border-radius:12px;">
-        <div class="autocomplete-list${hasResults ? ' open' : ''}" id="acListLabel">
-          ${listContent}
-        </div>
-      </div>
     </div>`;
       } else {
         searchField = `<div class="field"><label class="field-label" for="isrcFile" style="text-align:left; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; font-size: 0.75rem; margin-bottom: 12px; color: var(--text-mute);">UPLOAD ISRC LIST (EXCEL / CSV)</label>
