@@ -59,6 +59,23 @@
       },
     };
 
+    const CHECKPOINT_STATE_KEYS = [
+      "searchMode", "searchTerm", "resolvedEntities", "metadataSearch",
+      "screen3YearFilter", "includedAlbums", "territoryMode", "region",
+      "localTerritories", "excludedFlags", "projTracks", "expectedGrowth",
+      "expectedDecay", "albumFilter", "albumYearFilter", "analyticsTab",
+      "albumChartTab", "revenueTab", "screen5FromYear", "screen5FromMonth", "screen5ToYear",
+      "screen5ToMonth", "screen6FromYear", "screen6FromMonth", "screen6ToYear",
+      "screen6ToMonth",
+    ];
+
+    function getCheckpointState() {
+      return CHECKPOINT_STATE_KEYS.reduce((snapshot, key) => {
+        snapshot[key] = state[key];
+        return snapshot;
+      }, {});
+    }
+
     function initIncludedAlbums() {
       if (state.includedAlbums) return;
       const m = {};
@@ -1198,6 +1215,8 @@
     function renderScreen5() {
 
       let matrix = DATA.consumption_matrix;
+      const ageSplit = DATA.catalog_age_split || {};
+      const marketGrowth = DATA.market_growth || {};
 
       var fromYear5 = state.screen5FromYear ? parseInt(state.screen5FromYear) : null;
       var toYear5 = state.screen5ToYear ? parseInt(state.screen5ToYear) : null;
@@ -1274,9 +1293,9 @@
 
       return `
     <div class="grid grid-3">
-      ${kpiCard("Catalog from Releases older 10Years", DATA.catalog_age_split.older_than_10y_pct + "%")}
-      ${kpiCard("Catalog from last 5 years Releases", DATA.catalog_age_split.recent_releases_pct + "%")}
-      ${kpiCard("Artist Growth", DATA.market_growth.artist_growth_pct + "%", "vs prior year", true)}
+      ${kpiCard("Catalog from Releases older 10Years", (ageSplit.older_than_10y_pct ?? 0) + "%")}
+      ${kpiCard("Catalog from last 5 years Releases", (ageSplit.recent_releases_pct ?? 0) + "%")}
+      ${kpiCard("Artist Growth", (marketGrowth.artist_growth_pct ?? 0) + "%", "vs prior year", true)}
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
       <div class="subtabs" style="margin-bottom:0;">
@@ -2104,7 +2123,8 @@
           searchTerm: _searchTerm,
           searchMode: _searchMode,
           resolvedEntities: _entities,
-          completedSteps: Array.from(state.completedSteps)
+          completedSteps: Array.from(state.completedSteps),
+          workbenchState: getCheckpointState()
         }));
         window.parent.history.replaceState(null, '', url.toString());
         showNavigationLoader('Processing...');
@@ -2120,7 +2140,8 @@
               searchTerm: state.searchTerm || '',
               searchMode: state.searchMode || '',
               resolvedEntities: state.resolvedEntities || [],
-              completedSteps: Array.from(state.completedSteps)
+              completedSteps: Array.from(state.completedSteps),
+              workbenchState: getCheckpointState()
             }
           }));
         } catch(e2) {}
@@ -2379,6 +2400,14 @@
       } else {
         var localEntities = localStorage.getItem("__wb_resolved_entities");
         if (localEntities) state.resolvedEntities = JSON.parse(localEntities);
+      }
+      var savedWorkbenchState = __sd.workbenchState;
+      if (savedWorkbenchState && typeof savedWorkbenchState === "object") {
+        CHECKPOINT_STATE_KEYS.forEach(function(key) {
+          if (Object.prototype.hasOwnProperty.call(savedWorkbenchState, key)) {
+            state[key] = savedWorkbenchState[key];
+          }
+        });
       }
       // The immediately preceding steps are always complete for a sequential flow.
       for (var restoredStep = 1; restoredStep < state.screen; restoredStep++) {

@@ -22,7 +22,7 @@ from session_manager import (
     abandon_open_sessions,
 )
 from data_loader import load_data_from_postgres, search_catalog, create_isrc_temp_table, compute_analytics_from_monthly_detail, load_bobwa_consumption_matrix, load_bobwa_ppd, search_artists_dropdown, search_labels_dropdown, load_available_years
-from catalog_builder import create_step1_selection_table, create_catalog_table, create_step2_table, pull_monthly_detail
+from catalog_builder import create_step1_selection_table, create_catalog_table, create_step2_table, _make_table_name, pull_monthly_detail
 from postgres_connection import PostgresConnection
 
 # ─── Page config ─────────────────────────────────────────────────────────────
@@ -362,7 +362,9 @@ wb_isrc_filename = params.get("wb_isrc_filename", "")
 # ─── Load all data & compute (wrapped in spinner for loading feedback) ────────
 # Most functions use @st.cache_data so subsequent reloads are fast (cache hit).
 with st.container():
-    _requested_step = clamp_step(int(params.get("wb_step", "1") or "1"))
+    _requested_step = clamp_step(
+        int(params.get("wb_step", st.session_state.get("current_step", MIN_STEP)) or MIN_STEP)
+    )
     _needs_full_data = _requested_step >= 3 or params.get("wb_step2_created") == "1"
     if _needs_full_data:
         try:
@@ -429,14 +431,17 @@ with st.container():
 
     current_wb_step = int(params.get("wb_step", "0"))
     _sid = st.session_state.get("session_id", params.get("wb_session_id", ""))
-    _search_term = ""
-    _search_mode = "Artist"
+    _session_step_data = st.session_state.get("step_data", {})
+    if not isinstance(_session_step_data, dict):
+        _session_step_data = {}
+    _search_term = _session_step_data.get("searchTerm", "")
+    _search_mode = _session_step_data.get("searchMode", "Artist")
     wb_step_data_raw = params.get("wb_step_data", "")
     if wb_step_payload:
-        _search_term = wb_step_payload.get("searchTerm", "")
-        _search_mode = wb_step_payload.get("searchMode", "Artist")
+        _search_term = wb_step_payload.get("searchTerm") or _search_term
+        _search_mode = wb_step_payload.get("searchMode") or _search_mode
     if not _search_term:
-        _search_term = params.get("wb_search_term", "catalog")
+        _search_term = params.get("wb_search_term") or "catalog"
 
     _selected_entities = []
     if wb_step_payload:
@@ -444,6 +449,14 @@ with st.container():
             wb_step_payload.get("confirmed_mrelg_ids")
             or wb_step_payload.get("resolvedEntities")
             or wb_step_payload.get("entities")
+            or _session_step_data.get("confirmed_mrelg_ids")
+            or _session_step_data.get("resolvedEntities")
+            or []
+        )
+    else:
+        _selected_entities = (
+            _session_step_data.get("confirmed_mrelg_ids")
+            or _session_step_data.get("resolvedEntities")
             or []
         )
 
@@ -481,6 +494,9 @@ with st.container():
             st.session_state["_catalog_table_name"] = params.get("wb_step2_table", "")
 
     step2_table_name = st.session_state.get("_catalog_table_name", "") or params.get("wb_step2_table", "")
+    if not step2_table_name and _requested_step >= 3 and _sid and _search_term != "catalog":
+        step2_table_name = f"{DB}.{_make_table_name(2, user_email, _search_term, _sid)}"
+        st.session_state["_catalog_table_name"] = step2_table_name
     if step2_table_name and (params.get("wb_step2_created") == "1" or catalog_created or st.session_state.get("_catalog_table_name")):
         try:
             step2_df = session.sql(f"""
@@ -522,7 +538,7 @@ with st.container():
             st.session_state["_album_load_error"] = str(e)
 
     # Compute analytics — uses @st.cache_data, pass albums as JSON string for hashability
-    if step2_table_name and params.get("wb_step2_created") == "1" and injected_data.get("albums"):
+    if step2_table_name and injected_data.get("albums"):
         try:
             albums_json = json.dumps(injected_data["albums"], default=str)
             computed = compute_analytics_from_monthly_detail(session, step2_table_name, albums_json)

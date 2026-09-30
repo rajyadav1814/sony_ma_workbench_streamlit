@@ -692,15 +692,20 @@ def render_resume_screen(session):
                 key=f"resume_restart_{sid}",
                 on_click=_mark_ui_transition,
             ):
-                save_checkpoint(session, sid, 1, {})
+                restart_data = dict(step_data_resume)
+                restart_data["currentStep"] = 1
+                restart_data["completedSteps"] = []
+                save_checkpoint(session, sid, 1, restart_data)
                 st.session_state["welcomed"] = True
                 st.session_state["session_id"] = sid
                 st.session_state["current_step"] = 1
-                st.session_state["step_data"] = {}
+                st.session_state["step_data"] = restart_data
                 st.session_state["_login_transition"] = True
                 st.session_state.pop("_pending_resume", None)
                 st.session_state.pop("_pending_resume_list", None)
                 st.session_state.pop("_force_resume", None)
+                for param in ("wb_step", "wb_step_data", "wb_create_table"):
+                    st.query_params.pop(param, None)
                 st.rerun()
         with btn_c:
             _marker("remove")

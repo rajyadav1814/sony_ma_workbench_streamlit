@@ -39,6 +39,11 @@ def _make_table_name(step: int, user_email: str, entity_name: str, session_id: s
     return f"STEP{step}_{entity_part}_{user_part}_{ts}"
 
 
+def get_step2_table_name(user_email: str, entity_name: str, session_id: str = "") -> str:
+    """Return the deterministic Step 2 table name for a catalogue session."""
+    return f"{DB}.{_make_table_name(2, user_email, entity_name, session_id)}"
+
+
 def create_step1_selection_table(session, entity_name: str, user_email: str, selected_entities: list, search_mode: str = "Artist", session_id: str = "") -> dict:
     """Store the user's selected ambiguity entities into STEP1_{searchterm}_{username}_{sessionid}.
 
@@ -110,8 +115,7 @@ def create_catalog_table(session, entity_name: str, user_email: str, search_mode
     Logs the activity to CATALOG_ACTIVITY_LOG.
     Returns a dict with status, table_name, and summary stats.
     """
-    table_name = _make_table_name(2, user_email, entity_name, session_id=session_id)
-    fqn = f"{DB}.{table_name}"
+    fqn = get_step2_table_name(user_email, entity_name, session_id)
 
     entity_type_map = {
         "Artist/Band": "ARTIST",
