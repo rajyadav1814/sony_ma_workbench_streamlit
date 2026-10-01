@@ -15,7 +15,21 @@ from session_manager import (
 
 
 def render_welcome_screen(session):
-    """Render the welcome / login form. Sets session_state and triggers rerun."""
+    """Render the welcome / login form and process its submit callback."""
+    def _handle_login_submit():
+        clean_email = st.session_state.get("welcome_email", "").strip().lower()
+        if not clean_email:
+            st.session_state["_welcome_error"] = "Please enter your email to continue."
+            return
+        if not is_valid_email(clean_email):
+            st.session_state["_welcome_error"] = "Please enter a valid email address."
+            return
+
+        st.session_state.pop("_welcome_error", None)
+        st.session_state["user_email"] = clean_email
+        st.session_state["_pending_login"] = True
+        st.session_state["_login_transition"] = True
+
     welcome_styles = """
         <style>
             [data-testid="stVerticalBlock"] {gap: 1rem !important;}
@@ -182,7 +196,7 @@ def render_welcome_screen(session):
         st.markdown("<div style='padding-top: 30px;'></div>", unsafe_allow_html=True)
 
         with st.form("welcome_login_form", border=False):
-            email = st.text_input(
+            st.text_input(
                 "Email",
                 placeholder="you@sonymusic.com",
                 key="welcome_email",
@@ -193,41 +207,15 @@ def render_welcome_screen(session):
                 "Get Started",
                 type="primary",
                 use_container_width=True,
+                on_click=_handle_login_submit,
             )
 
-        if submitted:
-            clean_email = email.strip().lower()
-            if not clean_email:
-                st.warning("Please enter your email to continue.")
-                st.stop()
-            if not is_valid_email(clean_email):
-                st.error("Please enter a valid email address.")
-                st.stop()
-
-            st.session_state["user_email"] = clean_email
-
-            open_sessions = get_open_sessions(session, clean_email)
-            if open_sessions:
-                # Multiple in-progress catalogues are possible (one per artist/label
-                # search) — store the whole list so the resume screen can let the
-                # user pick which one to continue, restart, or remove.
-                st.session_state["_pending_resume_list"] = open_sessions
-                st.session_state["_pending_resume"] = open_sessions[0]
+        welcome_error = st.session_state.get("_welcome_error")
+        if welcome_error:
+            if "valid email" in welcome_error:
+                st.error(welcome_error)
             else:
-                # No existing session — create new and go straight to dashboard.
-                new_sess = create_new_session(session, clean_email)
-                st.session_state["welcomed"] = True
-                st.session_state["session_id"] = new_sess["session_id"]
-                st.session_state["current_step"] = new_sess["current_step"]
-                st.session_state["step_data"] = new_sess.get("step_data", {})
-                st.session_state["_login_transition"] = True
-                save_checkpoint(
-                    session,
-                    new_sess["session_id"],
-                    new_sess["current_step"],
-                    new_sess.get("step_data", {}),
-                )
-            st.rerun()
+                st.warning(welcome_error)
 
 
 def render_resume_screen(session):
@@ -236,6 +224,64 @@ def render_resume_screen(session):
 
     def _mark_ui_transition():
         st.session_state["_ui_transition"] = True
+
+    def _start_new_session():
+        new_sess = create_new_session(session, email)
+        st.session_state["welcomed"] = True
+        st.session_state["session_id"] = new_sess["session_id"]
+        st.session_state["current_step"] = new_sess["current_step"]
+        st.session_state["step_data"] = new_sess["step_data"]
+        st.session_state["_login_transition"] = True
+        st.session_state.pop("_pending_resume", None)
+        st.session_state.pop("_pending_resume_list", None)
+        st.session_state.pop("_force_resume", None)
+        _mark_ui_transition()
+
+    def _continue_session(pending):
+        st.session_state["welcomed"] = True
+        st.session_state["session_id"] = pending["session_id"]
+        st.session_state["current_step"] = pending["current_step"]
+        st.session_state["step_data"] = pending["step_data"]
+        st.session_state["_login_transition"] = True
+        st.session_state.pop("_pending_resume", None)
+        st.session_state.pop("_pending_resume_list", None)
+        st.session_state.pop("_force_resume", None)
+        _mark_ui_transition()
+
+    def _restart_session(session_id, step_data):
+        restart_data = dict(step_data)
+        restart_data["currentStep"] = 1
+        restart_data["completedSteps"] = []
+        save_checkpoint(session, session_id, 1, restart_data)
+        st.session_state["welcomed"] = True
+        st.session_state["session_id"] = session_id
+        st.session_state["current_step"] = 1
+        st.session_state["step_data"] = restart_data
+        st.session_state["_login_transition"] = True
+        st.session_state.pop("_pending_resume", None)
+        st.session_state.pop("_pending_resume_list", None)
+        st.session_state.pop("_force_resume", None)
+        for param in ("wb_step", "wb_step_data", "wb_create_table"):
+            st.query_params.pop(param, None)
+        _mark_ui_transition()
+
+    def _remove_session(session_id, pending_sessions):
+        complete_session(session, session_id)
+        remaining = [item for item in pending_sessions if item and item["session_id"] != session_id]
+        if remaining:
+            st.session_state["_pending_resume_list"] = remaining
+            st.session_state["_pending_resume"] = remaining[0]
+        else:
+            new_sess = create_new_session(session, email)
+            st.session_state["welcomed"] = True
+            st.session_state["session_id"] = new_sess["session_id"]
+            st.session_state["current_step"] = new_sess["current_step"]
+            st.session_state["step_data"] = new_sess.get("step_data", {})
+            st.session_state["_login_transition"] = True
+            st.session_state.pop("_pending_resume", None)
+            st.session_state.pop("_pending_resume_list", None)
+        st.session_state.pop("_force_resume", None)
+        _mark_ui_transition()
 
     sessions_list = st.session_state.get("_pending_resume_list")
     if not sessions_list:
@@ -607,22 +653,12 @@ def render_resume_screen(session):
     with start_col:
         st.markdown("<div style='padding-top: 18px;'></div>", unsafe_allow_html=True)
         _marker("startnew")
-        if st.button(
+        st.button(
             "Start new",
             use_container_width=True,
             key="start_new_btn",
-            on_click=_mark_ui_transition,
-        ):
-            new_sess = create_new_session(session, email)
-            st.session_state["welcomed"] = True
-            st.session_state["session_id"] = new_sess["session_id"]
-            st.session_state["current_step"] = new_sess["current_step"]
-            st.session_state["step_data"] = new_sess["step_data"]
-            st.session_state["_login_transition"] = True
-            st.session_state.pop("_pending_resume", None)
-            st.session_state.pop("_pending_resume_list", None)
-            st.session_state.pop("_force_resume", None)
-            st.rerun()
+            on_click=_start_new_session,
+        )
 
     for pending in sessions_list:
         if not pending:
@@ -669,68 +705,31 @@ def render_resume_screen(session):
         with btn_a:
             st.markdown('<span class="rs-btnrow" style="display:none"></span>', unsafe_allow_html=True)
             _marker("continue")
-            if st.button(
+            st.button(
                 "Continue",
                 use_container_width=True,
                 key=f"resume_continue_{sid}",
-                on_click=_mark_ui_transition,
-            ):
-                st.session_state["welcomed"] = True
-                st.session_state["session_id"] = pending["session_id"]
-                st.session_state["current_step"] = pending["current_step"]
-                st.session_state["step_data"] = pending["step_data"]
-                st.session_state["_login_transition"] = True
-                st.session_state.pop("_pending_resume", None)
-                st.session_state.pop("_pending_resume_list", None)
-                st.session_state.pop("_force_resume", None)
-                st.rerun()
+                on_click=_continue_session,
+                args=(pending,),
+            )
         with btn_b:
             _marker("restart")
-            if st.button(
+            st.button(
                 "Restart",
                 use_container_width=True,
                 key=f"resume_restart_{sid}",
-                on_click=_mark_ui_transition,
-            ):
-                restart_data = dict(step_data_resume)
-                restart_data["currentStep"] = 1
-                restart_data["completedSteps"] = []
-                save_checkpoint(session, sid, 1, restart_data)
-                st.session_state["welcomed"] = True
-                st.session_state["session_id"] = sid
-                st.session_state["current_step"] = 1
-                st.session_state["step_data"] = restart_data
-                st.session_state["_login_transition"] = True
-                st.session_state.pop("_pending_resume", None)
-                st.session_state.pop("_pending_resume_list", None)
-                st.session_state.pop("_force_resume", None)
-                for param in ("wb_step", "wb_step_data", "wb_create_table"):
-                    st.query_params.pop(param, None)
-                st.rerun()
+                on_click=_restart_session,
+                args=(sid, step_data_resume),
+            )
         with btn_c:
             _marker("remove")
-            if st.button(
+            st.button(
                 "Remove",
                 use_container_width=True,
                 key=f"resume_remove_{sid}",
-                on_click=_mark_ui_transition,
-            ):
-                complete_session(session, sid)
-                remaining = [s for s in sessions_list if s and s["session_id"] != sid]
-                if remaining:
-                    st.session_state["_pending_resume_list"] = remaining
-                    st.session_state["_pending_resume"] = remaining[0]
-                else:
-                    new_sess = create_new_session(session, email)
-                    st.session_state["welcomed"] = True
-                    st.session_state["session_id"] = new_sess["session_id"]
-                    st.session_state["current_step"] = new_sess["current_step"]
-                    st.session_state["step_data"] = new_sess.get("step_data", {})
-                    st.session_state["_login_transition"] = True
-                    st.session_state.pop("_pending_resume", None)
-                    st.session_state.pop("_pending_resume_list", None)
-                st.session_state.pop("_force_resume", None)
-                st.rerun()
+                on_click=_remove_session,
+                args=(sid, sessions_list),
+            )
 
         # Progress remains beneath the compact identity/action row.
         catalog_card.markdown(

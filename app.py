@@ -17,6 +17,7 @@ from session_manager import (
     clamp_step,
     ensure_session_tables,
     get_open_session,
+    get_open_sessions,
     create_new_session,
     save_checkpoint,
     abandon_open_sessions,
@@ -202,6 +203,8 @@ if _transition_loader_requested:
         _loader_title = "Processing…"
     elif _params.get("wb_logout") == "1":
         _loader_title = "Signing out…"
+    elif st.session_state.get("_pending_login"):
+        _loader_title = "Signing in…"
     else:
         _loader_title = "Processing Workbench…"
     _transition_loader.markdown(
@@ -285,6 +288,26 @@ if "wb_session_id" in _params and "session_id" not in st.session_state:
     st.session_state["session_id"] = _params["wb_session_id"]
 if "wb_step" in _params:
     st.session_state["current_step"] = clamp_step(int(_params["wb_step"]))
+
+if st.session_state.pop("_pending_login", False):
+    _email = st.session_state.get("user_email", "")
+    open_sessions = get_open_sessions(session, _email) if _email else []
+    if open_sessions:
+        st.session_state["_pending_resume_list"] = open_sessions
+        st.session_state["_pending_resume"] = open_sessions[0]
+        st.session_state.pop("_login_transition", None)
+    else:
+        new_sess = create_new_session(session, _email)
+        st.session_state["welcomed"] = True
+        st.session_state["session_id"] = new_sess["session_id"]
+        st.session_state["current_step"] = new_sess["current_step"]
+        st.session_state["step_data"] = new_sess.get("step_data", {})
+        save_checkpoint(
+            session,
+            new_sess["session_id"],
+            new_sess["current_step"],
+            new_sess.get("step_data", {}),
+        )
 
 # ─── Auth gate ───────────────────────────────────────────────────────────────
 if not st.session_state.get("user_email"):
