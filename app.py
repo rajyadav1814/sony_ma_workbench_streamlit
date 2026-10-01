@@ -49,6 +49,9 @@ _app_styles = """<style>
     .stMainBlockContainer, [data-testid="stMainBlockContainer"] { height: auto !important; overflow: visible !important; }
 
     /* Hide Streamlit's default connection error dialog */
+    /* The step loader shell already reports progress; hide the native spinner under it. */
+    [data-testid="stSpinner"] { display: none !important; }
+
     [data-testid="stConnectionStatus"],
     .stConnectionStatus,
     div[class*="ConnectionStatus"],
@@ -167,6 +170,12 @@ _app_styles = """<style>
         animation: wb-build-spin .8s linear infinite;
     }
     @keyframes wb-build-spin { to { transform: rotate(360deg); } }
+    /* Translucent variant: the screen underneath stays visible, only the loader card is shown. */
+    .wb-build-loader--over {
+        background: rgba(241, 239, 231, 0.55);
+        -webkit-backdrop-filter: blur(2px);
+        backdrop-filter: blur(2px);
+    }
 
     </style>"""
 if hasattr(st, "html"):
@@ -174,7 +183,53 @@ if hasattr(st, "html"):
 else:
     st.markdown(_app_styles, unsafe_allow_html=True)
 
+APP_DIR = Path(__file__).resolve().parent
+
+
+def _read_html(filename: str) -> str:
+    return (APP_DIR / "html" / filename).read_text(encoding="utf-8")
+
+
+def _logo_data_uri() -> str:
+    logo_path = APP_DIR / "sonymusic.png"
+    if logo_path.exists():
+        b64 = base64.b64encode(logo_path.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{b64}"
+    return "sonymusic.png"
+
+
+def _step_loader_html(title: str, step: int, completed_steps: list) -> str:
+    """Workbench header + step tabs with the loader card over the step content only."""
+    html = "\n".join([
+        _read_html("head_xlsx_shim.html"),
+        "<script>",
+        f"window.__SHELL_STEP__ = {int(step)};",
+        f"window.__SHELL_DONE__ = {json.dumps(completed_steps)};",
+        f"window.__SHELL_LABEL__ = {json.dumps(title)};",
+        f"window.__USER_EMAIL__ = {json.dumps(st.session_state.get('user_email', '') or _params.get('wb_email', ''))};",
+        "</script>",
+        _read_html("screens.html"),
+        _read_html("styles.html"),
+        _read_html("body_open.html"),
+        _read_html("loader.html"),
+        _read_html("loader_shell.html"),
+        _read_html("body_close.html"),
+    ])
+    return html.replace('src="sonymusic.png"', f'src="{_logo_data_uri()}"')
+
+
 _params = st.query_params
+# Home button: the workbench passes the current step so the header/tabs can be redrawn while reloading.
+# The move_resume handler below reruns the script, so the step is also kept in session state for that rerun.
+_home_loader = st.session_state.pop("_home_loader", None)
+if _params.get("wb_action") == "move_resume" and _params.get("wb_shell_step"):
+    try:
+        _home_loader = {
+            "step": int(_params.get("wb_shell_step")),
+            "done": [int(n) for n in json.loads(_params.get("wb_shell_done", "[]"))],
+        }
+    except (ValueError, TypeError):
+        pass
 _catalog_build_requested = (
     _params.get("wb_create_table") == "1"
     and _params.get("wb_step2_created") != "1"
@@ -191,9 +246,24 @@ _transition_loader_requested = (
     or _login_transition_requested
     or _ui_transition_requested
     or _params.get("wb_action") == "move_resume"
+    or bool(_home_loader)
     or _params.get("wb_reset") == "1"
 )
 _transition_loader = st.empty()
+_loader_slot_used = False
+
+
+def _loader_overlay_html(title: str, over: bool = False) -> str:
+    return f"""
+    <div id="wb-navigation-loader" class="wb-build-loader{' wb-build-loader--over' if over else ''}" role="status" aria-live="polite">
+      <div class="wb-build-loader__card">
+        <div class="wb-build-loader__spinner" aria-hidden="true"></div>
+        <div>{title}</div>
+      </div>
+    </div>
+    """
+
+
 if _transition_loader_requested:
     if _catalog_build_requested:
         _loader_title = "Building catalog…"
@@ -205,17 +275,36 @@ if _transition_loader_requested:
         _loader_title = "Signing in…"
     else:
         _loader_title = "Processing Workbench…"
-    _transition_loader.markdown(
-        f"""
-        <div id="wb-navigation-loader" class="wb-build-loader" role="status" aria-live="polite">
-          <div class="wb-build-loader__card">
-            <div class="wb-build-loader__spinner" aria-hidden="true"></div>
-            <div>{_loader_title}</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    if _catalog_build_requested or _step_navigation_requested or _home_loader:
+        # Step changes keep the header and tabs on screen; only the content area shows the loader.
+        if _home_loader and not (_catalog_build_requested or _step_navigation_requested):
+            _shell_step = clamp_step(_home_loader["step"])
+            _shell_done = _home_loader["done"]
+        else:
+            _shell_step = clamp_step(int(_params.get("wb_step") or st.session_state.get("current_step", MIN_STEP)))
+            try:
+                _shell_done = [int(n) for n in json.loads(_params.get("wb_step_data", "{}")).get("completedSteps", [])]
+            except (ValueError, TypeError, AttributeError):
+                _shell_done = []
+        with _transition_loader.container():
+            components.html(_step_loader_html(_loader_title, _shell_step, _shell_done), height=760, scrolling=False)
+        _loader_slot_used = True
+    elif st.session_state.get("_pending_login"):
+        # Login → welcome back: keep the Welcome screen visible, loader card on top only.
+        from steps.welcome import render_welcome_screen
+        with _transition_loader.container():
+            render_welcome_screen(None, backdrop=True)
+            st.markdown(_loader_overlay_html(_loader_title, over=True), unsafe_allow_html=True)
+        _loader_slot_used = True
+    elif _ui_transition_requested and st.session_state.get("_resume_backdrop"):
+        # Start new / Continue / Restart / Remove: keep the resume screen visible, loader card on top only.
+        from steps.welcome import render_resume_screen
+        with _transition_loader.container():
+            render_resume_screen(None, backdrop=True)
+            st.markdown(_loader_overlay_html(_loader_title, over=True), unsafe_allow_html=True)
+        _loader_slot_used = True
+    else:
+        _transition_loader.markdown(_loader_overlay_html(_loader_title), unsafe_allow_html=True)
 
 if _params.get("wb_logout") == "1":
     for key in list(st.session_state.keys()):
@@ -236,9 +325,6 @@ if not st.session_state.get("user_email") and "wb_email" not in _params:
     from steps.welcome import render_welcome_screen
     render_welcome_screen(None)
     st.stop()
-
-# ─── Resolve app directory (so we can read html/ partials) ───────────────────
-APP_DIR = Path(__file__).resolve().parent
 
 # ─── PostgreSQL connection ──────────────────────────────────────────────────
 conn = PostgresConnection()
@@ -309,6 +395,8 @@ if _params.get("wb_action") == "move_resume":
     for key in list(st.session_state.keys()):
         if key not in ("user_email", "_session_tables_checked"):
             del st.session_state[key]
+    if _home_loader:
+        st.session_state["_home_loader"] = _home_loader
     if _email:
         st.session_state["user_email"] = _email
     if open_sessions:
@@ -689,18 +777,6 @@ with st.container():
 # ─── Assemble HTML workbench ─────────────────────────────────────────────────
 
 
-def _read_html(filename: str) -> str:
-    return (APP_DIR / "html" / filename).read_text(encoding="utf-8")
-
-
-def _logo_data_uri() -> str:
-    logo_path = APP_DIR / "sonymusic.png"
-    if logo_path.exists():
-        b64 = base64.b64encode(logo_path.read_bytes()).decode("ascii")
-        return f"data:image/png;base64,{b64}"
-    return "sonymusic.png"
-
-
 data_json = json.dumps(injected_data, default=str)
 current_step = st.session_state.get("current_step", 1)
 
@@ -715,8 +791,10 @@ html_parts = [
     f"window.__SESSION_ID__ = {json.dumps(st.session_state.get('session_id', ''))};",
     f"window.__STEP_DATA__ = {json.dumps(st.session_state.get('step_data', {}), default=str)};",
     "</script>",
+    _read_html("screens.html"),
     _read_html("styles.html"),
     _read_html("body_open.html"),
+    _read_html("loader.html"),
     _read_html("workbench_scripts.html"),
     "</script>",
     _read_html("body_close.html"),
@@ -725,6 +803,9 @@ html_parts = [
 html_full = "\n".join(html_parts)
 html_full = html_full.replace('src="sonymusic.png"', f'src="{_logo_data_uri()}"')
 
+if _loader_slot_used:
+    # Clear the loader screen (shell, welcome or resume backdrop) before showing the workbench.
+    _transition_loader.empty()
 components.html(html_full, height=900, scrolling=True)
 st.session_state.pop("_ui_transition", None)
 if _login_transition_requested:

@@ -1,0 +1,35 @@
+<script>
+    /* Loader shell: shown by app.py while Streamlit reloads after Next/Back.
+       Mirrors renderTabbar()/renderTopNav() in workbench_scripts.html (keep in sync) so the
+       header, step tabs and step title stay on screen and only the content area shows the loader. */
+    (function () {
+      var step = window.__SHELL_STEP__ || 1;
+      var done = window.__SHELL_DONE__ || [];
+      var theme = "light";
+      try { theme = localStorage.getItem("wb_theme") || "light"; } catch (e) {}
+      document.documentElement.setAttribute("data-theme", theme);
+      document.getElementById("themeLabel").textContent = theme === "dark" ? "LIGHT" : "DARK";
+      document.getElementById("userEmail").textContent = window.__USER_EMAIL__ || "";
+      document.body.style.pointerEvents = "none";
+
+      var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); };
+      var pills = SCREENS.map(function (s) {
+        var active = s.n === step;
+        var completed = done.indexOf(s.n) !== -1 && !active;
+        var cls = "tab-pill" + (active ? " active" : "") + (completed ? " completed" : "");
+        var check = completed ? '<span class="check-icon">&#10003;</span>' : "";
+        return '<span class="' + cls + '" style="--pill-c:' + s.color + '; cursor: default; pointer-events: none;">' + check + s.n + " &middot; " + s.label + "</span>";
+      }).join("");
+      document.getElementById("tabbar").innerHTML = '<button class="btn secondary" style="margin:0 10px 0 0;flex:0 0 auto;">Home</button>' + pills;
+
+      var t = SCREEN_TITLES[step - 1];
+      document.getElementById("topNav").innerHTML =
+        '<div style="flex:0 0 120px;"></div>' +
+        '<div style="text-align:center; flex:1; min-width:0;">' +
+        '<div class="section-title" style="text-align:center; margin-bottom:2px; padding-left:0; margin-top:0;">' + esc(t.label) + "</div>" +
+        '<div class="section-caption" style="text-align:center; margin-bottom:4px; padding-left:0; font-family:var(--font-serif); font-size:0.8rem; font-weight:200; color:var(--text-main); letter-spacing:-0.01em;">' + esc(t.caption) + "</div></div>" +
+        '<div style="flex:0 0 120px;"></div>';
+
+      wbMountStepLoader(window.__SHELL_LABEL__);
+    })();
+</script>

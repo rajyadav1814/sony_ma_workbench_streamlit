@@ -4,17 +4,6 @@
        App logic (vanilla JS, no frameworks)
        ============================================================ */
 
-    const SCREENS = [
-      { n: 1, key: "catalog", label: "CATALOG SELECT", color: "var(--accent)" },
-      { n: 2, key: "metadata", label: "RESOLVE AMBIGUITY", color: "var(--accent)" },
-      { n: 3, key: "metainc", label: "METADATA TO INCLUDE", color: "var(--accent)" },
-      { n: 4, key: "territory", label: "TERRITORY MAP", color: "var(--accent)" },
-      { n: 5, key: "analytics", label: "CATALOG ANALYTICS", color: "var(--accent)" },
-      { n: 6, key: "revenue", label: "REVENUE & PPD", color: "var(--accent)" },
-      { n: 7, key: "albums", label: "ALBUM ANALYSIS", color: "var(--accent)" },
-      { n: 8, key: "export", label: "CORPORATE EXPORT", color: "var(--accent)" },
-    ];
-
     const state = {
       screen: 1,
       completedSteps: new Set(),
@@ -1943,49 +1932,11 @@
     }
 
     function showNavigationLoader(label) {
-      try {
-        var doc = window.parent.document;
-        if (window.parent.__wbNavigationLoaderTimer) {
-          window.parent.clearTimeout(window.parent.__wbNavigationLoaderTimer);
-          window.parent.__wbNavigationLoaderTimer = null;
-        }
-        var existing = doc.getElementById('wb-navigation-loader');
-        if (existing) existing.remove();
-        var loader = doc.createElement('div');
-        loader.id = 'wb-navigation-loader';
-        loader.setAttribute('role', 'status');
-        loader.setAttribute('aria-live', 'polite');
-        loader.innerHTML = '<div class="wb-navigation-loader-card">'
-          + '<div class="wb-navigation-spinner" aria-hidden="true"></div>'
-          + '<div class="wb-navigation-loader-title">' + (label || 'Loading next step...') + '</div>'
-          + '<div class="wb-navigation-loader-subtitle">Please wait while we prepare your results.</div>'
-          + '<div class="wb-navigation-loader-progress" aria-hidden="true"><span></span></div>'
-          + '</div>';
-        loader.style.cssText = 'position:fixed;inset:0;z-index:999999;display:flex;align-items:center;justify-content:center;background:rgba(241,239,231,.94);font-family:Inter,Arial,sans-serif;color:#141210;';
-        var card = loader.firstElementChild;
-        card.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:12px;min-width:310px;padding:32px 44px;background:#fff;border:1px solid rgba(20,18,14,.12);border-radius:16px;box-shadow:0 14px 34px rgba(20,18,14,.14);text-align:center;';
-        var spinner = card.firstElementChild;
-        spinner.style.cssText = 'width:34px;height:34px;border:4px solid #e5e1d8;border-top-color:#e1261c;border-radius:50%;animation:wbNavigationSpin .8s linear infinite;';
-        var title = spinner.nextElementSibling;
-        title.style.cssText = 'font-size:15px;font-weight:700;';
-        var subtitle = title.nextElementSibling;
-        subtitle.style.cssText = 'font-size:13px;font-weight:400;color:#6b655c;';
-        var progress = subtitle.nextElementSibling;
-        progress.style.cssText = 'width:100%;height:4px;overflow:hidden;background:#e5e1d8;border-radius:99px;margin-top:4px;';
-        progress.firstElementChild.style.cssText = 'display:block;width:38%;height:100%;background:#e1261c;border-radius:99px;animation:wbNavigationProgress 1.1s ease-in-out infinite;';
-        var style = doc.createElement('style');
-        style.id = 'wb-navigation-loader-style';
-        style.textContent = '@keyframes wbNavigationSpin{to{transform:rotate(360deg)}}@keyframes wbNavigationProgress{0%{transform:translateX(-115%)}100%{transform:translateX(290%)}}';
-        doc.head.appendChild(style);
-        doc.body.appendChild(loader);
-        window.parent.__wbNavigationLoaderTimer = window.parent.setTimeout(function() {
-          var stale = doc.getElementById('wb-navigation-loader');
-          if (stale) stale.remove();
-          var staleStyle = doc.getElementById('wb-navigation-loader-style');
-          if (staleStyle) staleStyle.remove();
-          window.parent.__wbNavigationLoaderTimer = null;
-        }, 120000);
-      } catch (e) {}
+      // Covers only the step content; the header and step tabs stay visible.
+      var overlay = wbMountStepLoader(label);
+      if (!overlay) return;
+      try { overlay.firstElementChild.scrollIntoView({ block: "center" }); } catch (e) {}
+      setTimeout(wbRemoveStepLoader, 120000);
     }
 
     // Reload the host after query parameters change so Streamlit rebuilds the iframe.
@@ -2033,7 +1984,7 @@
             searchMode: state.searchMode || 'Artist',
             resolvedEntities: []
           }));
-          showNavigationLoader('Loading matching catalogues...');
+          showNavigationLoader('Processing matching catalogues…');
           // Streamlit recognizes this explicit reload reliably after query
           // parameters change; assigning href alone can retain a stale iframe.
           window.parent.history.replaceState(null, '', searchUrl.toString());
@@ -2063,7 +2014,7 @@
             searchMode: state.searchMode || 'Artist'
           }));
           window.parent.history.replaceState(null, '', buildUrl.toString());
-          showNavigationLoader('Building catalog...');
+          showNavigationLoader('Building catalog…');
           if (!requestWorkbenchRerun()) window.parent.location.reload();
         } catch(e) {}
         return;
@@ -2127,7 +2078,7 @@
           workbenchState: getCheckpointState()
         }));
         window.parent.history.replaceState(null, '', url.toString());
-        showNavigationLoader('Processing...');
+        showNavigationLoader('Processing…');
         if (requestWorkbenchRerun()) return;
         return;
       } catch(e) {
@@ -2174,7 +2125,11 @@
         url.searchParams.set('wb_action', 'move_resume');
         url.searchParams.set('wb_email', email);
         url.searchParams.set('wb_ts', Date.now().toString());
+        // Lets the host redraw this header and tab bar while it reloads.
+        url.searchParams.set('wb_shell_step', String(state.screen));
+        url.searchParams.set('wb_shell_done', JSON.stringify(Array.from(state.completedSteps)));
         window.parent.history.replaceState(null, '', url.toString());
+        showNavigationLoader('Processing Workbench…');
         window.parent.location.reload();
       } catch(e) {
         // Cross-origin fallback: message the parent instead of navigating this iframe
@@ -2198,17 +2153,6 @@
     function renderMeta() {
       // Entity chip removed from UI.
     }
-
-    const SCREEN_TITLES = [
-      { label: "Select Catalog", caption: "Identify the catalog to be evaluated by artist, label, or an uploaded ISRC list." },
-      { label: "Resolve Ambiguity", caption: "Select one or more catalog entities. Near-duplicate names must not be merged silently." },
-      { label: "Metadata to Include", caption: "Select which albums / tracks / labels flow into the valuation." },
-      { label: "Local Territory Selection", caption: "Required input — drives PPD calculations, revenue allocation, and Corporate outputs." },
-      { label: "Catalog Analytics", caption: "Consumption split by content type and monetization model, with catalog age and market benchmark KPIs." },
-      { label: "Release-Year Analysis & Revenue Conversion", caption: "Consumption, revenue, and growth by release-year bucket, plus PPD-based revenue conversion and Local/ROW output." },
-      { label: "Album Analysis", caption: "Albums, release year, track count, total consumption (by release year bucket), and current revenue for the resolved catalog." },
-      { label: "Corporate Export", caption: "Standardized summary tables and Corporate-model inputs, ready for the Corporate Excel process." },
-    ];
 
     function renderTopNav() {
       const pipelineBusy = state.screen === 2 && (state.pipeline.status === "running" || state.pipeline.status === "failed" || state.pipeline.status === "completed");

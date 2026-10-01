@@ -1,0 +1,24 @@
+<script>
+    /* Step names shared by the workbench and the navigation loader shell. */
+    const SCREENS = [
+      { n: 1, key: "catalog", label: "CATALOG SELECT", color: "var(--accent)" },
+      { n: 2, key: "metadata", label: "RESOLVE AMBIGUITY", color: "var(--accent)" },
+      { n: 3, key: "metainc", label: "METADATA TO INCLUDE", color: "var(--accent)" },
+      { n: 4, key: "territory", label: "TERRITORY MAP", color: "var(--accent)" },
+      { n: 5, key: "analytics", label: "CATALOG ANALYTICS", color: "var(--accent)" },
+      { n: 6, key: "revenue", label: "REVENUE & PPD", color: "var(--accent)" },
+      { n: 7, key: "albums", label: "ALBUM ANALYSIS", color: "var(--accent)" },
+      { n: 8, key: "export", label: "CORPORATE EXPORT", color: "var(--accent)" },
+    ];
+
+    const SCREEN_TITLES = [
+      { label: "Select Catalog", caption: "Identify the catalog to be evaluated by artist, label, or an uploaded ISRC list." },
+      { label: "Resolve Ambiguity", caption: "Select one or more catalog entities. Near-duplicate names must not be merged silently." },
+      { label: "Metadata to Include", caption: "Select which albums / tracks / labels flow into the valuation." },
+      { label: "Local Territory Selection", caption: "Required input — drives PPD calculations, revenue allocation, and Corporate outputs." },
+      { label: "Catalog Analytics", caption: "Consumption split by content type and monetization model, with catalog age and market benchmark KPIs." },
+      { label: "Release-Year Analysis & Revenue Conversion", caption: "Consumption, revenue, and growth by release-year bucket, plus PPD-based revenue conversion and Local/ROW output." },
+      { label: "Album Analysis", caption: "Albums, release year, track count, total consumption (by release year bucket), and current revenue for the resolved catalog." },
+      { label: "Corporate Export", caption: "Standardized summary tables and Corporate-model inputs, ready for the Corporate Excel process." },
+    ];
+</script>

@@ -8,8 +8,13 @@ from session_manager import (
 )
 
 
-def render_welcome_screen(session):
-    """Render the welcome / login form and process its submit callback."""
+def render_welcome_screen(session, backdrop=False):
+    """Render the welcome / login form and process its submit callback.
+
+    backdrop=True is used while the login loader is shown: the CSS is emitted inline
+    (st.markdown) so it is removed together with the loader slot. st.html puts it in a
+    page-level container that outlives the slot and would restyle the next screen.
+    """
     def _handle_login_submit():
         clean_email = st.session_state.get("welcome_email", "").strip().lower()
         if not clean_email:
@@ -164,7 +169,7 @@ def render_welcome_screen(session):
             }
         </style>
         """
-    if hasattr(st, "html"):
+    if hasattr(st, "html") and not backdrop:
         st.html(welcome_styles)
     else:
         st.markdown(welcome_styles, unsafe_allow_html=True)
@@ -212,8 +217,12 @@ def render_welcome_screen(session):
                 st.warning(welcome_error)
 
 
-def render_resume_screen(session):
-    """Render the 'Welcome back' resume screen matching the Next.js reference design."""
+def render_resume_screen(session, backdrop=False):
+    """Render the 'Welcome back' resume screen matching the Next.js reference design.
+
+    backdrop=True redraws the last rendered list of catalogues (non-interactive, separate
+    widget keys) so it can stay visible behind the loader while Streamlit processes a click.
+    """
 
     def _mark_ui_transition():
         st.session_state["_ui_transition"] = True
@@ -258,10 +267,15 @@ def render_resume_screen(session):
         st.session_state.pop("_force_resume", None)
         _mark_ui_transition()
 
-    sessions_list = st.session_state.get("_pending_resume_list")
-    if not sessions_list:
-        single = st.session_state.get("_pending_resume")
-        sessions_list = [single] if single else []
+    if backdrop:
+        sessions_list = st.session_state.get("_resume_backdrop") or []
+    else:
+        sessions_list = st.session_state.get("_pending_resume_list")
+        if not sessions_list:
+            single = st.session_state.get("_pending_resume")
+            sessions_list = [single] if single else []
+        st.session_state["_resume_backdrop"] = sessions_list
+    key_suffix = "_bd" if backdrop else ""
 
     _fallback_term = ""
     _params = st.query_params
@@ -602,7 +616,7 @@ def render_resume_screen(session):
 
     with topbar_right:
         _marker("logout")
-        st.button("Logout", key="logout_btn", on_click=_logout)
+        st.button("Logout", key=f"logout_btn{key_suffix}", on_click=_logout)
 
     st.markdown("<hr style='border:none;border-top:1.5px solid #141210;margin:0 0 20px 0;'>", unsafe_allow_html=True)
 
@@ -627,7 +641,7 @@ def render_resume_screen(session):
         st.button(
             "Start new",
             use_container_width=True,
-            key="start_new_btn",
+            key=f"start_new_btn{key_suffix}",
             on_click=_start_new_session,
         )
 
@@ -679,7 +693,7 @@ def render_resume_screen(session):
             st.button(
                 "Continue",
                 use_container_width=True,
-                key=f"resume_continue_{sid}",
+                key=f"resume_continue_{sid}{key_suffix}",
                 on_click=_continue_session,
                 args=(pending,),
             )
@@ -688,7 +702,7 @@ def render_resume_screen(session):
             st.button(
                 "Restart",
                 use_container_width=True,
-                key=f"resume_restart_{sid}",
+                key=f"resume_restart_{sid}{key_suffix}",
                 on_click=_restart_session,
                 args=(sid, step_data_resume),
             )
@@ -697,7 +711,7 @@ def render_resume_screen(session):
             st.button(
                 "Remove",
                 use_container_width=True,
-                key=f"resume_remove_{sid}",
+                key=f"resume_remove_{sid}{key_suffix}",
                 on_click=_remove_session,
                 args=(sid, sessions_list),
             )
