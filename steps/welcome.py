@@ -225,6 +225,14 @@ def render_resume_screen(session):
     def _mark_ui_transition():
         st.session_state["_ui_transition"] = True
 
+    def _logout():
+        for key in list(st.session_state.keys()):
+            if key != "_session_tables_checked":
+                del st.session_state[key]
+        for key in list(st.query_params.keys()):
+            if key.startswith("wb_"):
+                del st.query_params[key]
+
     def _start_new_session():
         new_sess = create_new_session(session, email)
         st.session_state["welcomed"] = True
@@ -627,11 +635,7 @@ def render_resume_screen(session):
 
     with topbar_right:
         _marker("logout")
-        if st.button("Logout", key="logout_btn", on_click=_mark_ui_transition):
-            for key in list(st.session_state.keys()):
-                if key not in ("_session_tables_checked", "_ui_transition"):
-                    del st.session_state[key]
-            st.rerun()
+        st.button("Logout", key="logout_btn", on_click=_logout)
 
     st.markdown("<hr style='border:none;border-top:1.5px solid #141210;margin:0 0 20px 0;'>", unsafe_allow_html=True)
 

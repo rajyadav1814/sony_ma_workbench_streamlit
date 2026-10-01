@@ -189,7 +189,6 @@ _transition_loader_requested = (
     or _step_navigation_requested
     or _login_transition_requested
     or _ui_transition_requested
-    or _params.get("wb_logout") == "1"
     or _params.get("wb_action") == "move_resume"
     or _params.get("wb_reset") == "1"
 )
@@ -201,8 +200,6 @@ if _transition_loader_requested:
         _loader_title = "Processing matching catalogues…"
     elif _step_navigation_requested:
         _loader_title = "Processing…"
-    elif _params.get("wb_logout") == "1":
-        _loader_title = "Signing out…"
     elif st.session_state.get("_pending_login"):
         _loader_title = "Signing in…"
     else:
@@ -219,6 +216,26 @@ if _transition_loader_requested:
         unsafe_allow_html=True,
     )
 
+if _params.get("wb_logout") == "1":
+    for key in list(st.session_state.keys()):
+        if key != "_session_tables_checked":
+            del st.session_state[key]
+    for key in list(st.query_params.keys()):
+        if key.startswith("wb_"):
+            del st.query_params[key]
+    _transition_loader.empty()
+    from steps.welcome import render_welcome_screen
+    render_welcome_screen(None)
+    st.stop()
+
+if not st.session_state.get("user_email") and "wb_email" not in _params:
+    st.session_state.pop("_ui_transition", None)
+    st.session_state.pop("_login_transition", None)
+    _transition_loader.empty()
+    from steps.welcome import render_welcome_screen
+    render_welcome_screen(None)
+    st.stop()
+
 # ─── Resolve app directory (so we can read html/ partials) ───────────────────
 APP_DIR = Path(__file__).resolve().parent
 
@@ -234,15 +251,6 @@ if "_session_tables_checked" not in st.session_state:
     st.session_state["_session_tables_checked"] = True
 
 # ─── Restore session from query params (after JS-triggered reload) ────────────
-
-if _params.get("wb_logout") == "1":
-    for key in list(st.session_state.keys()):
-        if key != "_session_tables_checked":
-            del st.session_state[key]
-    for k in list(st.query_params.keys()):
-        if k.startswith("wb_"):
-            del st.query_params[k]
-    st.rerun()
 
 if _params.get("wb_action") == "move_resume":
     _email = st.session_state.get("user_email", "") or _params.get("wb_email", "")
