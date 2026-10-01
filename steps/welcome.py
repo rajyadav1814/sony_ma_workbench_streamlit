@@ -5,12 +5,6 @@ import streamlit as st
 from config import MAX_STEP, MIN_STEP, STEP_LABELS
 from session_manager import (
     is_valid_email,
-    get_open_session,
-    get_open_sessions,
-    create_new_session,
-    abandon_open_sessions,
-    save_checkpoint,
-    complete_session,
 )
 
 
@@ -220,7 +214,6 @@ def render_welcome_screen(session):
 
 def render_resume_screen(session):
     """Render the 'Welcome back' resume screen matching the Next.js reference design."""
-    email = st.session_state["user_email"]
 
     def _mark_ui_transition():
         st.session_state["_ui_transition"] = True
@@ -234,15 +227,7 @@ def render_resume_screen(session):
                 del st.query_params[key]
 
     def _start_new_session():
-        new_sess = create_new_session(session, email)
-        st.session_state["welcomed"] = True
-        st.session_state["session_id"] = new_sess["session_id"]
-        st.session_state["current_step"] = new_sess["current_step"]
-        st.session_state["step_data"] = new_sess["step_data"]
-        st.session_state["_login_transition"] = True
-        st.session_state.pop("_pending_resume", None)
-        st.session_state.pop("_pending_resume_list", None)
-        st.session_state.pop("_force_resume", None)
+        st.session_state["_pending_resume_action"] = {"action": "start_new"}
         _mark_ui_transition()
 
     def _continue_session(pending):
@@ -257,37 +242,19 @@ def render_resume_screen(session):
         _mark_ui_transition()
 
     def _restart_session(session_id, step_data):
-        restart_data = dict(step_data)
-        restart_data["currentStep"] = 1
-        restart_data["completedSteps"] = []
-        save_checkpoint(session, session_id, 1, restart_data)
-        st.session_state["welcomed"] = True
-        st.session_state["session_id"] = session_id
-        st.session_state["current_step"] = 1
-        st.session_state["step_data"] = restart_data
-        st.session_state["_login_transition"] = True
-        st.session_state.pop("_pending_resume", None)
-        st.session_state.pop("_pending_resume_list", None)
-        st.session_state.pop("_force_resume", None)
-        for param in ("wb_step", "wb_step_data", "wb_create_table"):
-            st.query_params.pop(param, None)
+        st.session_state["_pending_resume_action"] = {
+            "action": "restart",
+            "session_id": session_id,
+            "step_data": step_data,
+        }
         _mark_ui_transition()
 
     def _remove_session(session_id, pending_sessions):
-        complete_session(session, session_id)
-        remaining = [item for item in pending_sessions if item and item["session_id"] != session_id]
-        if remaining:
-            st.session_state["_pending_resume_list"] = remaining
-            st.session_state["_pending_resume"] = remaining[0]
-        else:
-            new_sess = create_new_session(session, email)
-            st.session_state["welcomed"] = True
-            st.session_state["session_id"] = new_sess["session_id"]
-            st.session_state["current_step"] = new_sess["current_step"]
-            st.session_state["step_data"] = new_sess.get("step_data", {})
-            st.session_state["_login_transition"] = True
-            st.session_state.pop("_pending_resume", None)
-            st.session_state.pop("_pending_resume_list", None)
+        st.session_state["_pending_resume_action"] = {
+            "action": "remove",
+            "session_id": session_id,
+            "pending_sessions": pending_sessions,
+        }
         st.session_state.pop("_force_resume", None)
         _mark_ui_transition()
 

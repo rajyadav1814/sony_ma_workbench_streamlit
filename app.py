@@ -20,6 +20,7 @@ from session_manager import (
     get_open_sessions,
     create_new_session,
     save_checkpoint,
+    complete_session,
     abandon_open_sessions,
 )
 from data_loader import load_data_from_postgres, search_catalog, create_isrc_temp_table, compute_analytics_from_monthly_detail, load_bobwa_consumption_matrix, load_bobwa_ppd, search_artists_dropdown, search_labels_dropdown, load_available_years
@@ -249,6 +250,55 @@ if "_session_tables_checked" not in st.session_state:
     except Exception:
         pass
     st.session_state["_session_tables_checked"] = True
+
+_resume_action = st.session_state.pop("_pending_resume_action", None)
+if isinstance(_resume_action, dict):
+    _action = _resume_action.get("action")
+    if _action == "start_new":
+        _new_sess = create_new_session(session, st.session_state.get("user_email", ""))
+        st.session_state["welcomed"] = True
+        st.session_state["session_id"] = _new_sess["session_id"]
+        st.session_state["current_step"] = _new_sess["current_step"]
+        st.session_state["step_data"] = _new_sess["step_data"]
+        st.session_state.pop("_pending_resume", None)
+        st.session_state.pop("_pending_resume_list", None)
+        st.session_state.pop("_force_resume", None)
+    elif _action == "restart":
+        _restart_data = _resume_action.get("step_data", {})
+        _restart_data = dict(_restart_data) if isinstance(_restart_data, dict) else {}
+        _restart_data["currentStep"] = 1
+        _restart_data["completedSteps"] = []
+        _restart_session_id = _resume_action.get("session_id", "")
+        save_checkpoint(session, _restart_session_id, 1, _restart_data)
+        st.session_state["welcomed"] = True
+        st.session_state["session_id"] = _restart_session_id
+        st.session_state["current_step"] = 1
+        st.session_state["step_data"] = _restart_data
+        st.session_state.pop("_pending_resume", None)
+        st.session_state.pop("_pending_resume_list", None)
+        st.session_state.pop("_force_resume", None)
+        for _param in ("wb_step", "wb_step_data", "wb_create_table"):
+            st.query_params.pop(_param, None)
+    elif _action == "remove":
+        _removed_session_id = _resume_action.get("session_id", "")
+        complete_session(session, _removed_session_id)
+        _remaining_sessions = [
+            item
+            for item in _resume_action.get("pending_sessions", [])
+            if item and item.get("session_id") != _removed_session_id
+        ]
+        if _remaining_sessions:
+            st.session_state["_pending_resume_list"] = _remaining_sessions
+            st.session_state["_pending_resume"] = _remaining_sessions[0]
+        else:
+            _new_sess = create_new_session(session, st.session_state.get("user_email", ""))
+            st.session_state["welcomed"] = True
+            st.session_state["session_id"] = _new_sess["session_id"]
+            st.session_state["current_step"] = _new_sess["current_step"]
+            st.session_state["step_data"] = _new_sess.get("step_data", {})
+            st.session_state.pop("_pending_resume", None)
+            st.session_state.pop("_pending_resume_list", None)
+        st.session_state.pop("_force_resume", None)
 
 # ─── Restore session from query params (after JS-triggered reload) ────────────
 
@@ -676,7 +726,6 @@ html_full = "\n".join(html_parts)
 html_full = html_full.replace('src="sonymusic.png"', f'src="{_logo_data_uri()}"')
 
 components.html(html_full, height=900, scrolling=True)
-_transition_loader.empty()
 st.session_state.pop("_ui_transition", None)
 if _login_transition_requested:
     st.session_state.pop("_login_transition", None)
