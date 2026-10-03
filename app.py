@@ -23,7 +23,8 @@ from session_manager import (
     complete_session,
     abandon_open_sessions,
 )
-from data_loader import load_data_from_postgres, search_catalog, create_isrc_temp_table, compute_analytics_from_monthly_detail, load_bobwa_consumption_matrix, load_bobwa_ppd, search_artists_dropdown, search_labels_dropdown, load_available_years
+from data_loader import load_data_from_postgres, search_catalog, create_isrc_temp_table, compute_analytics_from_monthly_detail, search_artists_dropdown, search_labels_dropdown
+from build_progress import NULL_PROGRESS, BuildProgress
 from catalog_builder import create_step1_selection_table, create_catalog_table, create_step2_table, _make_table_name, pull_monthly_detail
 from postgres_connection import PostgresConnection
 
@@ -137,6 +138,13 @@ _app_styles = """<style>
         filter: none !important;
     }
 
+    /* While a rerun is in progress Streamlit hides the previous run's elements (data-stale) but leaves
+       the bordered catalogue-card shells behind as empty outlines. Hide a card whose marker is stale. */
+    [data-testid="stLayoutWrapper"]:has(> [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"][data-stale="true"] .catalog-card-marker),
+    [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"][data-stale="true"] .catalog-card-marker) {
+        display: none !important;
+    }
+
     /* Keep catalog-build feedback visible while Streamlit recreates the iframe. */
     .wb-build-loader {
         position: fixed;
@@ -177,6 +185,44 @@ _app_styles = """<style>
         backdrop-filter: blur(2px);
     }
 
+    /* Live catalog-build progress card (driven by build_progress.BuildProgress). */
+    .wb-progress__card {
+        width: min(560px, 92vw);
+        max-height: 92vh;
+        overflow-y: auto;
+        padding: 36px 44px 30px;
+        border: 1px solid rgba(20, 18, 14, 0.12);
+        border-radius: 14px;
+        background: #fff;
+        box-shadow: 0 14px 34px rgba(20, 18, 14, 0.14);
+        color: #141210;
+        font-family: Inter, Arial, sans-serif;
+        text-align: center;
+    }
+    .wb-progress__title { font-size: 1.25rem; font-weight: 700; margin-bottom: 6px; }
+    .wb-progress__sub { font-size: .88rem; color: #6b665c; margin-bottom: 22px; }
+    .wb-progress__bar { height: 14px; border-radius: 10px; background: #E5E1D8; overflow: hidden; }
+    .wb-progress__fill {
+        height: 100%;
+        border-radius: 10px;
+        background: linear-gradient(90deg, #E1261C 0%, #ff6b5e 100%);
+        transition: width .35s ease;
+    }
+    .wb-progress__pct { margin-top: 12px; font-size: 1.15rem; font-weight: 700; color: #E1261C; }
+    .wb-progress__meta { margin-top: 4px; font-size: .8rem; color: #8a8579; }
+    .wb-progress__steps { list-style: none; margin: 22px 0 0; padding: 16px 0 0; border-top: 1px solid #ECE8DE; text-align: left; }
+    .wb-progress__step { display: flex; gap: 10px; align-items: flex-start; padding: 4px 0; font-size: .86rem; line-height: 1.35; }
+    .wb-progress__icon { flex: 0 0 18px; text-align: center; }
+    .wb-progress__step--done { color: #1E9E5A; }
+    .wb-progress__step--active { color: #141210; font-weight: 600; }
+    .wb-progress__step--todo { color: #a8a396; }
+    .wb-progress__detail { display: block; font-weight: 400; font-size: .78rem; color: #6b665c; }
+    .wb-progress__spin {
+        display: inline-block; width: 12px; height: 12px; margin-top: 2px;
+        border: 2px solid #E5E1D8; border-top-color: #E1261C; border-radius: 50%;
+        animation: wb-build-spin .8s linear infinite;
+    }
+
     </style>"""
 if hasattr(st, "html"):
     st.html(_app_styles)
@@ -184,6 +230,9 @@ else:
     st.markdown(_app_styles, unsafe_allow_html=True)
 
 APP_DIR = Path(__file__).resolve().parent
+
+
+EMPTY_TERRITORIES = {"countries": [], "codes": {}, "regions": {}, "default_local": []}
 
 
 def _read_html(filename: str) -> str:
@@ -251,6 +300,7 @@ _transition_loader_requested = (
 )
 _transition_loader = st.empty()
 _loader_slot_used = False
+_build_progress = None
 
 
 def _loader_overlay_html(title: str, over: bool = False) -> str:
@@ -275,7 +325,12 @@ if _transition_loader_requested:
         _loader_title = "Signing in…"
     else:
         _loader_title = "Processing Workbench…"
-    if _catalog_build_requested or _step_navigation_requested or _home_loader:
+    if _catalog_build_requested:
+        # Catalog build: a live card whose percentage is driven by the real database work below.
+        _build_progress = BuildProgress(_transition_loader)
+        _build_progress.stage("prepare", "Starting")
+        _loader_slot_used = True
+    elif _step_navigation_requested or _home_loader:
         # Step changes keep the header and tabs on screen; only the content area shows the loader.
         if _home_loader and not (_catalog_build_requested or _step_navigation_requested):
             _shell_step = clamp_step(_home_loader["step"])
@@ -429,7 +484,15 @@ if _do_reset:
 
 if "wb_email" in _params and not st.session_state.get("user_email"):
     st.session_state["user_email"] = _params["wb_email"]
-    st.session_state["welcomed"] = True
+    if _params.get("wb_view") == "resume" and is_valid_email(_params["wb_email"]):
+        # Browser refresh on the "Welcome back" screen: show it again instead of logging out.
+        _restored = get_open_sessions(session, _params["wb_email"])
+        if _restored:
+            st.session_state["_pending_resume_list"] = _restored
+            st.session_state["_pending_resume"] = _restored[0]
+        st.session_state["_force_resume"] = True
+    else:
+        st.session_state["welcomed"] = True
 if "wb_session_id" in _params and "session_id" not in st.session_state:
     st.session_state["session_id"] = _params["wb_session_id"]
 if "wb_step" in _params:
@@ -474,6 +537,12 @@ if (
     from steps.welcome import render_resume_screen
     render_resume_screen(session)
     st.stop()
+
+# Past the resume screen: drop the params that only existed to restore it, so a later refresh
+# in the workbench behaves as before (the workbench writes its own wb_* params as you navigate).
+if st.query_params.get("wb_view") == "resume":
+    st.query_params.pop("wb_view", None)
+    st.query_params.pop("wb_email", None)
 
 if "session_id" not in st.session_state:
     new_sess = create_new_session(session, st.session_state["user_email"])
@@ -542,17 +611,13 @@ with st.container():
             injected_data = {"albums": [], "ambiguity_matches": {}, "tracks": [], "track_album_bridge": [],
                              "consumption_matrix": [], "growth_trend": [], "release_year_analysis": [],
                              "new_release_tracks": [], "catalog_options": {"artists": [], "labels": []},
-                             "territories": {"countries": ["United States", "Mexico", "Colombia"],
-                                             "regions": {"Latin America": ["Mexico", "Colombia"],
-                                                         "North America": ["United States"]}}}
+                             "territories": EMPTY_TERRITORIES}
     else:
         injected_data = {
             "albums": [], "ambiguity_matches": {}, "tracks": [], "track_album_bridge": [],
             "consumption_matrix": [], "growth_trend": [], "release_year_analysis": [],
             "new_release_tracks": [], "catalog_options": {"artists": [], "labels": []},
-            "territories": {"countries": ["United States", "Mexico", "Colombia"],
-                            "regions": {"Latin America": ["Mexico", "Colombia"],
-                                        "North America": ["United States"]}},
+            "territories": EMPTY_TERRITORIES,
         }
 
     # Cache the latest live matches in the active Streamlit session. The Step 1
@@ -629,10 +694,10 @@ with st.container():
             or []
         )
 
+    _progress = _build_progress or NULL_PROGRESS
     if current_wb_step >= 2 and params.get("wb_create_table") == "1" and params.get("wb_step2_created") != "1":
-        # Native Streamlit status is supported by both local and hosted
-        # deployments, unlike a manually injected HTML overlay.
-        with st.spinner("Building catalog…", show_time=True):
+        # Progress is shown by the live card (_build_progress), updated as each query completes.
+        with st.container():
             st.session_state["_table_creation_error"] = ""
             if not _search_term or not _sid:
                 st.session_state["_table_creation_error"] = "Catalog creation is missing the search term or session ID. Please return to Step 1 and try again."
@@ -640,14 +705,14 @@ with st.container():
                 try:
                     step1_result = None
                     if _selected_entities:
-                        step1_result = create_step1_selection_table(session, _search_term, user_email, _selected_entities, search_mode=_search_mode, session_id=_sid)
+                        step1_result = create_step1_selection_table(session, _search_term, user_email, _selected_entities, search_mode=_search_mode, session_id=_sid, progress=_progress)
                     else:
                         # Fallback: if no entities selected but we have a search term, use it as the entity.
-                        step1_result = create_step1_selection_table(session, _search_term, user_email, [_search_term], search_mode=_search_mode, session_id=_sid)
+                        step1_result = create_step1_selection_table(session, _search_term, user_email, [_search_term], search_mode=_search_mode, session_id=_sid, progress=_progress)
                     if step1_result and step1_result["status"] == "success" and step1_result.get("row_count", 0) > 0:
                         step1_table = step1_result["table_name"]
                         st.session_state["_step1_table_name"] = step1_table
-                        step2_table = create_step2_table(session, step1_table, _selected_entities, user_email, _search_term, session_id=_sid)
+                        step2_table = create_step2_table(session, step1_table, _selected_entities, user_email, _search_term, session_id=_sid, progress=_progress)
                         st.session_state["_catalog_table_name"] = step2_table
                         catalog_created = True
                         st.query_params.update({"wb_step2_created": "1", "wb_step2_table": step2_table})
@@ -667,6 +732,7 @@ with st.container():
         step2_table_name = f"{DB}.{_make_table_name(2, user_email, _search_term, _sid)}"
         st.session_state["_catalog_table_name"] = step2_table_name
     if step2_table_name and (params.get("wb_step2_created") == "1" or catalog_created or st.session_state.get("_catalog_table_name")):
+        _progress.stage("albums", "Reading the catalog albums")
         try:
             step2_df = session.sql(f"""
                 SELECT *
@@ -706,60 +772,16 @@ with st.container():
         except Exception as e:
             st.session_state["_album_load_error"] = str(e)
 
-    # Compute analytics — uses @st.cache_data, pass albums as JSON string for hashability
+    # Steps 4-8: every figure is computed from the database for this catalog
+    # (see analytics.py). Cached per catalog table; albums are passed as JSON for hashability.
     if step2_table_name and injected_data.get("albums"):
         try:
             albums_json = json.dumps(injected_data["albums"], default=str)
-            computed = compute_analytics_from_monthly_detail(session, step2_table_name, albums_json)
-            if computed:
-                for key in ("territories", "consumption_matrix", "growth_trend",
-                            "market_growth", "catalog_age_split", "release_year_analysis",
-                            "local_row_revenue", "ppd", "new_release_tracks", "albums",
-                            "release_year_consumption", "release_year_consumption_segments"):
-                    if key in computed:
-                        injected_data[key] = computed[key]
-        except Exception:
-            try:
-                from data_loader import _compute_from_album_metadata
-                from datetime import datetime
-                fallback = _compute_from_album_metadata(injected_data["albums"], datetime.now().year)
-                if fallback:
-                    for key in ("territories", "consumption_matrix", "growth_trend",
-                                "market_growth", "catalog_age_split", "release_year_analysis",
-                                "local_row_revenue", "ppd", "new_release_tracks", "albums",
-                                "release_year_consumption", "release_year_consumption_segments"):
-                        if key in fallback:
-                            injected_data[key] = fallback[key]
-            except Exception:
-                pass
-
-    # BOBWA data — now @st.cache_data cached
-    try:
-        bobwa_matrix = load_bobwa_consumption_matrix(session)
-        if bobwa_matrix:
-            injected_data["consumption_matrix"] = bobwa_matrix
-    except Exception:
-        pass
-
-    try:
-        bobwa_ppd = load_bobwa_ppd(session)
-        if bobwa_ppd:
-            injected_data["ppd"] = {
-                "current_splits": bobwa_ppd["current_splits"],
-                "future_splits": bobwa_ppd["future_splits"],
-            }
-            injected_data["ppd_by_year"] = bobwa_ppd.get("ppd_by_year", [])
-            injected_data["ppd_by_country"] = bobwa_ppd.get("ppd_by_country", [])
-    except Exception:
-        pass
-
-    # Available years from MONTHLY_MR_SUMMARY for year filters
-    try:
-        available_years = load_available_years(session)
-        if available_years:
-            injected_data["available_years"] = available_years
-    except Exception:
-        pass
+            computed = compute_analytics_from_monthly_detail(session, step2_table_name, albums_json, progress=_progress)
+            injected_data.update(computed)
+        except Exception as e:
+            # Surface the failure in the UI rather than showing invented numbers.
+            injected_data["analytics_error"] = f"{type(e).__name__}: {e}"
 
     # Debug info for troubleshooting step 2→3 data flow
     injected_data["_debug"] = {
@@ -803,6 +825,8 @@ html_parts = [
 html_full = "\n".join(html_parts)
 html_full = html_full.replace('src="sonymusic.png"', f'src="{_logo_data_uri()}"')
 
+if _build_progress:
+    _build_progress.finish()
 if _loader_slot_used:
     # Clear the loader screen (shell, welcome or resume backdrop) before showing the workbench.
     _transition_loader.empty()

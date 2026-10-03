@@ -7,7 +7,19 @@ Naming convention: STEP{N}_{searchterm}_{username}_{sessionid}
 
 import re
 from datetime import datetime
+from build_progress import NULL_PROGRESS
 from config import DB, LUMINATE_DATABASE, LUMINATE_SCHEMA
+
+MAX_PROGRESS_TICKS = 8   # each batch scans the Luminate view once, so keep this small
+MIN_BATCH_SIZE = 3
+
+
+def _batches(items: list, max_ticks: int = MAX_PROGRESS_TICKS, max_size: int = 50) -> list[list]:
+    """Split ``items`` into at most ``max_ticks`` batches so progress can be reported per batch."""
+    if not items:
+        return []
+    size = min(max_size, max(MIN_BATCH_SIZE, -(-len(items) // max_ticks)))
+    return [items[i:i + size] for i in range(0, len(items), size)]
 
 
 def _upper_keys(row) -> dict:
@@ -44,7 +56,7 @@ def get_step2_table_name(user_email: str, entity_name: str, session_id: str = ""
     return f"{DB}.{_make_table_name(2, user_email, entity_name, session_id)}"
 
 
-def create_step1_selection_table(session, entity_name: str, user_email: str, selected_entities: list, search_mode: str = "Artist", session_id: str = "") -> dict:
+def create_step1_selection_table(session, entity_name: str, user_email: str, selected_entities: list, search_mode: str = "Artist", session_id: str = "", progress=NULL_PROGRESS) -> dict:
     """Store the user's selected ambiguity entities into STEP1_{searchterm}_{username}_{sessionid}.
 
     Queries the configured Luminate source schema for release groups.
@@ -57,6 +69,7 @@ def create_step1_selection_table(session, entity_name: str, user_email: str, sel
     luminate_view = f"{LUMINATE_DATABASE}.{LUMINATE_SCHEMA}.VW_MUSICAL_RELEASE_GROUP_DS"
 
     try:
+        progress.stage("prepare", "Creating the selection table")
         session.sql(
             f"""CREATE OR REPLACE TABLE {fqn} (
                 MRELG_ID VARCHAR,
@@ -69,24 +82,28 @@ def create_step1_selection_table(session, entity_name: str, user_email: str, sel
             )"""
         ).collect()
 
-        # Batch all selected entities into one query to avoid a round-trip per
-        # artist or label when a search returns many ambiguity matches.
+        # Selected entities are matched in batches (not one query per artist or label) so the
+        # progress card can report real progress while keeping round-trips low.
         entities = [str(entity) for entity in selected_entities if entity]
         if entities and search_mode in ("Artist", "Label"):
-            placeholders = ", ".join(f":{index + 1}" for index in range(len(entities)))
             source_column = "DISPLAY_ARTIST" if search_mode == "Artist" else "IMPRINT"
-            entity_expr = f"{source_column}"
-            params = entities + [entity_name, search_mode, user_email, session_id]
-            offset = len(entities)
-            session.sql(
-                f"""INSERT INTO {fqn}
-                    (MRELG_ID, ENTITY_NAME, SEARCH_TERM, SEARCH_MODE, SELECTED_BY, SESSION_ID)
-                    SELECT DISTINCT MRELG_ID, {entity_expr}, :{offset + 1},
-                        :{offset + 2}, :{offset + 3}, :{offset + 4}
-                    FROM {luminate_view}
-                    WHERE {source_column} IN ({placeholders})""",
-                params=params,
-            ).collect()
+            noun = "artists" if search_mode == "Artist" else "labels"
+            progress.stage("match", f"Matching {len(entities):,} selected {noun}")
+            matched = 0
+            for batch in _batches(entities):
+                placeholders = ", ".join(f":{index + 1}" for index in range(len(batch)))
+                offset = len(batch)
+                session.sql(
+                    f"""INSERT INTO {fqn}
+                        (MRELG_ID, ENTITY_NAME, SEARCH_TERM, SEARCH_MODE, SELECTED_BY, SESSION_ID)
+                        SELECT DISTINCT MRELG_ID, {source_column}, :{offset + 1},
+                            :{offset + 2}, :{offset + 3}, :{offset + 4}
+                        FROM {luminate_view}
+                        WHERE {source_column} IN ({placeholders})""",
+                    params=batch + [entity_name, search_mode, user_email, session_id],
+                ).collect()
+                matched += len(batch)
+                progress.advance(matched / len(entities), f"{matched:,} of {len(entities):,} {noun} matched")
         elif entities:
             # ISRC List or other modes: preserve the uploaded/selected values.
             values_sql = ", ".join(
@@ -102,6 +119,7 @@ def create_step1_selection_table(session, entity_name: str, user_email: str, sel
             ).collect()
 
         row_count = _upper_keys(session.sql(f"SELECT COUNT(*) AS CNT FROM {fqn}").collect()[0])["CNT"]
+        progress.note(f"{int(row_count):,} release groups matched")
         return {"status": "success", "table_name": fqn, "row_count": int(row_count)}
     except Exception as e:
         return {"status": "error", "table_name": fqn, "error": str(e)}
@@ -231,11 +249,11 @@ def create_catalog_table(session, entity_name: str, user_email: str, search_mode
         return {"status": "error", "table_name": fqn, "error": str(e)}
 
 
-def create_step2_table(session, step1_table: str, confirmed_mrelg_ids: list, user_email: str, entity_name: str, session_id: str = "") -> str:
+def create_step2_table(session, step1_table: str, confirmed_mrelg_ids: list, user_email: str, entity_name: str, session_id: str = "", progress=NULL_PROGRESS) -> str:
     """Create Step 2 table with release group details from Luminate.
 
     Uses MRELG_IDs from the STEP1 table to query VW_MUSICAL_RELEASE_GROUP_DS
-    for full release metadata.
+    for full release metadata, loading one batch of entities at a time so progress is real.
     Table: STEP2_{user}_{entity}_{sessionid}
     Returns the fully-qualified table name.
     """
@@ -243,17 +261,7 @@ def create_step2_table(session, step1_table: str, confirmed_mrelg_ids: list, use
     fqn = f"{DB}.{table_name}"
     luminate_view = f"{LUMINATE_DATABASE}.{LUMINATE_SCHEMA}.VW_MUSICAL_RELEASE_GROUP_DS"
 
-    # Filter step1 to only confirmed entities (if provided)
-    if confirmed_mrelg_ids:
-        placeholders = ", ".join([f":{i+1}" for i in range(len(confirmed_mrelg_ids))])
-        filter_clause = f"WHERE s1.ENTITY_NAME IN ({placeholders})"
-        params = confirmed_mrelg_ids
-    else:
-        filter_clause = ""
-        params = []
-
-    sql = f"""CREATE OR REPLACE TABLE {fqn} AS
-            SELECT
+    select_sql = f"""SELECT
                 v.MRELG_ID,
                 v.TITLE,
                 v.DISPLAY_ARTIST,
@@ -271,14 +279,24 @@ def create_step2_table(session, step1_table: str, confirmed_mrelg_ids: list, use
                 s1.SELECTED_BY,
                 s1.SESSION_ID
             FROM {luminate_view} v
-            JOIN {step1_table} s1 ON v.MRELG_ID = s1.MRELG_ID
-            {filter_clause}"""
+            JOIN {step1_table} s1 ON v.MRELG_ID = s1.MRELG_ID"""
 
-    if params:
-        session.sql(sql, params=params).collect()
-    else:
-        session.sql(sql).collect()
+    progress.stage("details", "Creating the release table")
+    session.sql(f"CREATE OR REPLACE TABLE {fqn} AS {select_sql} WHERE 1 = 0").collect()
 
+    # Entities to load: the confirmed ones, else every entity recorded in the STEP1 table.
+    entities = [str(e) for e in confirmed_mrelg_ids if e] or [
+        _upper_keys(r)["ENTITY_NAME"]
+        for r in session.sql(f"SELECT DISTINCT ENTITY_NAME FROM {step1_table} WHERE ENTITY_NAME IS NOT NULL").collect()
+    ]
+    loaded = 0
+    for batch in _batches(entities):
+        placeholders = ", ".join(f":{i + 1}" for i in range(len(batch)))
+        session.sql(f"INSERT INTO {fqn} {select_sql} WHERE s1.ENTITY_NAME IN ({placeholders})", params=batch).collect()
+        loaded += len(batch)
+        progress.advance(loaded / len(entities), f"{loaded:,} of {len(entities):,} selections loaded")
+    count = _upper_keys(session.sql(f"SELECT COUNT(*) AS CNT FROM {fqn}").collect()[0])["CNT"]
+    progress.note(f"{int(count):,} releases loaded")
     return fqn
 
 

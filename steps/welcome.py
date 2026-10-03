@@ -3,6 +3,7 @@
 import json
 import streamlit as st
 from config import MAX_STEP, MIN_STEP, STEP_LABELS
+from theme import LIGHT_CSS, THEME_CSS, render_theme_toggle
 from session_manager import (
     is_valid_email,
 )
@@ -31,9 +32,10 @@ def render_welcome_screen(session, backdrop=False):
 
     welcome_styles = """
         <style>
+            """ + LIGHT_CSS + """
             [data-testid="stVerticalBlock"] {gap: 1rem !important;}
             [data-testid="stAppViewContainer"] {
-                background: #F1EFE7 !important;
+                background: var(--wb-bg) !important;
                 padding-top: 75px;
             }
             div.block-container {
@@ -41,10 +43,10 @@ def render_welcome_screen(session, backdrop=False):
                 max-width: 100% !important;
             }
             .welcome-card {
-                background: #ffffff;
+                background: var(--wb-surface);
                 border-radius: 16px;
                 padding: 48px 40px;
-                box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+                box-shadow: 0 4px 24px var(--wb-shadow);
                 max-width: 640px;
                 margin: 0 auto;
             }
@@ -57,11 +59,11 @@ def render_welcome_screen(session, backdrop=False):
             .welcome-card p {
                 line-height: 1.6;
                 margin-bottom: 8px;
-                color: #1a1a2e;
+                color: var(--wb-text);
             }
             .welcome-card .subtitle {
                 opacity: 0.65;
-                color: #4b5563;
+                color: var(--wb-text-dim);
             }
             /* Keep the native form, input, submit button, and messages aligned
                to the welcome card rather than stretching across the page. */
@@ -81,7 +83,7 @@ def render_welcome_screen(session, backdrop=False):
             }
             /* Fix input text colors on white background */
             [data-testid="stTextInput"] label {
-                color: #1a1a2e !important;
+                color: var(--wb-text) !important;
                 font-size: 14px !important;
                 font-weight: 600 !important;
             }
@@ -91,10 +93,10 @@ def render_welcome_screen(session, backdrop=False):
                 width: 100% !important;
                 min-height: 44px !important;
                 appearance: none !important;
-                color-scheme: light !important;
-                color: #1a1a2e !important;
-                background: #ffffff !important;
-                border: 1px solid #9ca3af !important;
+                color-scheme: var(--wb-scheme) !important;
+                color: var(--wb-text) !important;
+                background: var(--wb-input-bg) !important;
+                border: 1px solid var(--wb-input-border) !important;
                 border-radius: 6px !important;
                 padding: 10px 12px !important;
                 font: 400 16px/1.4 Inter, Arial, sans-serif !important;
@@ -103,17 +105,17 @@ def render_welcome_screen(session, backdrop=False):
                 box-shadow: inset 0 1px 2px rgba(0,0,0,0.06) !important;
             }
             [data-testid="stTextInput"] input:autofill {
-                -webkit-text-fill-color: #1a1a2e !important;
-                -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
-                box-shadow: 0 0 0 1000px #ffffff inset !important;
+                -webkit-text-fill-color: var(--wb-text) !important;
+                -webkit-box-shadow: 0 0 0 1000px var(--wb-input-bg) inset !important;
+                box-shadow: 0 0 0 1000px var(--wb-input-bg) inset !important;
             }
             [data-testid="stTextInput"] input:-webkit-autofill,
             [data-testid="stTextInput"] input:-webkit-autofill:hover,
             [data-testid="stTextInput"] input:-webkit-autofill:focus,
             [data-testid="stTextInput"] input:-webkit-autofill:active {
-                -webkit-text-fill-color: #1a1a2e !important;
-                -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
-                box-shadow: 0 0 0 1000px #ffffff inset !important;
+                -webkit-text-fill-color: var(--wb-text) !important;
+                -webkit-box-shadow: 0 0 0 1000px var(--wb-input-bg) inset !important;
+                box-shadow: 0 0 0 1000px var(--wb-input-bg) inset !important;
             }
             [data-testid="stTextInput"] input:focus {
                 border-color: #3b5de7 !important;
@@ -155,16 +157,16 @@ def render_welcome_screen(session, backdrop=False):
             }
             /* Validation messages use a distinct, readable error treatment. */
             [data-testid="stAlert"] {
-                background: #FFF1F2 !important;
-                border: 1px solid #FDA4AF !important;
+                background: var(--wb-alert-bg) !important;
+                border: 1px solid var(--wb-alert-border) !important;
                 border-radius: 10px !important;
-                color: #9F1239 !important;
+                color: var(--wb-alert-text) !important;
                 padding: 14px 16px !important;
             }
             [data-testid="stAlert"] *,
             [data-testid="stAlert"] p,
             [data-testid="stAlert"] [data-testid="stMarkdownContainer"] {
-                color: #9F1239 !important;
+                color: var(--wb-alert-text) !important;
                 opacity: 1 !important;
             }
         </style>
@@ -277,6 +279,12 @@ def render_resume_screen(session, backdrop=False):
         st.session_state["_resume_backdrop"] = sessions_list
     key_suffix = "_bd" if backdrop else ""
 
+    # Keep the login and this screen in the URL: a browser refresh starts a fresh Streamlit session
+    # (session_state is lost), and app.py uses these two params to restore this same screen.
+    if not backdrop and st.session_state.get("user_email"):
+        st.query_params["wb_email"] = st.session_state["user_email"]
+        st.query_params["wb_view"] = "resume"
+
     _fallback_term = ""
     _params = st.query_params
     _sd_raw = _params.get("wb_step_data", "")
@@ -290,9 +298,10 @@ def render_resume_screen(session, backdrop=False):
     st.markdown(
         """
         <style>
+            """ + THEME_CSS + """
             [data-testid="stVerticalBlock"] {gap: 0.8rem !important;}
             [data-testid="stAppViewContainer"] {
-                background: #F1EFE7 !important;
+                background: var(--wb-bg) !important;
             }
             div.block-container {
                 padding: 0px 200px !important; max-width: 100% !important;
@@ -300,7 +309,7 @@ def render_resume_screen(session, backdrop=False):
                 min-height: 100vh; max-height: none !important;
                 overflow: visible !important;
             }
-            .stApp {overflow: visible !important; background: #F1EFE7;}
+            .stApp {overflow: visible !important; background: var(--wb-bg);}
 
             /* Top bar */
             .resume-topbar {
@@ -309,7 +318,7 @@ def render_resume_screen(session, backdrop=False):
                 align-items: center;
                 justify-content: space-between;
                 padding: 18px 0;
-                border-bottom: 1.5px solid #141210;
+                border-bottom: 1.5px solid var(--wb-line);
                 margin-bottom: 20px;
             }
             .resume-brand {
@@ -327,16 +336,16 @@ def render_resume_screen(session, backdrop=False):
                 font-size: 11px;
                 font-weight: 600;
                 letter-spacing: 2.8px;
-                color: #141210;
+                color: var(--wb-text);
                 padding-bottom: 4px;
-                border-bottom: 1px solid #c9c5bb;
+                border-bottom: 1px solid var(--wb-line-soft);
                 margin-bottom: 3px;
             }
             .resume-brand-sub {
                 font-size: 10px;
                 font-weight: 600;
                 letter-spacing: 2.8px;
-                color: #141210;
+                color: var(--wb-text);
             }
             .resume-topbar-center {
                 display: flex;
@@ -350,10 +359,10 @@ def render_resume_screen(session, backdrop=False):
                 font-weight: 800;
                 font-size: 26px;
                 line-height: 1.1;
-                color: #c51616;
+                color: var(--wb-title);
             }
             .resume-topbar-desc {
-                color: #5a564c;
+                color: var(--wb-text-dim);
                 font-size: 15px;
                 line-height: 1.4;
                 max-width: 800px;
@@ -376,14 +385,14 @@ def render_resume_screen(session, backdrop=False):
                 width: 100%;
             }
             .resume-heading h2 {
-                color: #1b5a02;
+                color: var(--wb-heading-green);
                 font-size: 32px;
                 font-weight: 800;
                 margin: 0 0 -17px 0;
                 text-align: center;
             }
             .resume-heading .subtitle {
-                color: #6b7280;
+                color: var(--wb-text-mute);
                 font-size: 16px;
                 margin-bottom: 22px;
                 text-align: center;
@@ -409,7 +418,7 @@ def render_resume_screen(session, backdrop=False):
                 flex: 1 1 0% !important;
                 align-items: flex-start !important;
                 justify-content: flex-start !important;
-                border: 5px solid rgb(20 19 19 / 20%) !important;
+                border: 5px solid var(--wb-card-border) !important;
                 border-radius: 2.5rem !important;
                 padding: calc(1rem - 3px) !important;
                 overflow: visible !important;
@@ -434,17 +443,17 @@ def render_resume_screen(session, backdrop=False):
                 flex-shrink: 0;
             }
             .resume-session-info .name {
-                color: #111827;
+                color: var(--wb-text);
                 font-weight: 600;
                 font-size: 18px;
             }
             .resume-session-info .desc {
-                color: #6b7280;
+                color: var(--wb-text-mute);
                 font-size: 14px;
                 margin-top: 3px;
             }
             .resume-session-info .updated {
-                color: #8f8a7e;
+                color: var(--wb-text-faint);
                 font-size: 12px;
                 margin-top: 4px;
             }
@@ -452,7 +461,7 @@ def render_resume_screen(session, backdrop=False):
                 display: flex;
                 justify-content: space-between;
                 margin: 0 0 10px 0;
-                color: #6b7280;
+                color: var(--wb-text-mute);
                 font-size: 13px;
                 font-weight: 500;
             }
@@ -477,7 +486,7 @@ def render_resume_screen(session, backdrop=False):
             }
             .step-pill.completed { background: #16a34a; color: #fff; }
             .step-pill.current { background: #dc2626; color: #fff; box-shadow: 0 0 0 3px rgba(220,38,38,0.2); }
-            .step-pill.future { background: #eef1f6; color: #9ca3af; }
+            .step-pill.future { background: var(--wb-pill-future-bg); color: var(--wb-pill-future-fg); }
 
             /* ── Action buttons ──────────────────────────────────────────────
                Colours are applied with pure CSS via an invisible marker span that
@@ -615,10 +624,15 @@ def render_resume_screen(session, backdrop=False):
         )
 
     with topbar_right:
-        _marker("logout")
-        st.button("Logout", key=f"logout_btn{key_suffix}", on_click=_logout)
+        toggle_col, logout_col = st.columns([1, 1], gap="small", vertical_alignment="center")
+        with toggle_col:
+            if not backdrop:
+                render_theme_toggle()
+        with logout_col:
+            _marker("logout")
+            st.button("Logout", key=f"logout_btn{key_suffix}", on_click=_logout)
 
-    st.markdown("<hr style='border:none;border-top:1.5px solid #141210;margin:0 0 20px 0;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='border:none;border-top:1.5px solid var(--wb-line);margin:0 0 20px 0;'>", unsafe_allow_html=True)
 
     # ─── Heading with Start new action on the right ────────────────────────────
     _n = len(sessions_list)

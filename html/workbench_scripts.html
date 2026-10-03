@@ -16,11 +16,12 @@
       includedAlbums: null,
       territoryMode: "Country selection",
       region: Object.keys((DATA.territories && DATA.territories.regions) || {})[0] || "",
-      localTerritories: ["Mexico", "United States", "Colombia"],
+      // null = "not chosen yet": resolved from DATA (default_local / assumptions) at render time.
+      localTerritories: null,
       excludedFlags: ["Duplicate", "Outlier", "Incomplete Data"],
-      projTracks: 10,
-      expectedGrowth: 8.0,
-      expectedDecay: -6.0,
+      projTracks: null,
+      expectedGrowth: null,
+      expectedDecay: null,
       albumFilter: "All",
       albumYearFilter: [],
       analyticsTab: 0,
@@ -78,7 +79,16 @@
     /* ---------------- helpers ---------------- */
     const $ = sel => document.querySelector(sel);
     const $$ = sel => Array.from(document.querySelectorAll(sel));
-    const fmtUSD = v => { const m = Number(v) / 1000000; return "$" + m.toLocaleString("en-US", { maximumFractionDigits: 1 }) + "M"; };
+    // Adaptive units so small catalogs don't all collapse to "$0.0M" / "0.0M".
+    const _scaled = (v, digits) => {
+      v = Number(v) || 0;
+      const a = Math.abs(v), f = n => n.toLocaleString("en-US", { maximumFractionDigits: digits });
+      if (a >= 1e6) return f(v / 1e6) + "M";
+      if (a >= 1e3) return f(v / 1e3) + "K";
+      return v.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    };
+    const fmtUSD = v => "$" + _scaled(v, 1);
+    const fmtStreams = v => _scaled(v, 1);
     const fmtUSD4 = v => "$" + Number(v).toFixed(4);
     const fmtNum = v => Number(v).toLocaleString("en-US");
     const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -129,7 +139,7 @@
       }
     }
 
-    function kpiCard(label, value, delta, positive) {
+    function kpiCard(label, value, delta, positive, note) {
       let deltaHtml = "";
       if (delta !== undefined && delta !== null) {
         const cls = positive ? "pos" : "neg";
@@ -140,6 +150,7 @@
     <div class="kpi-label">${esc(label)}</div>
     <div class="kpi-value">${value}</div>
     ${deltaHtml}
+    ${note ? `<div class="kpi-note">${esc(note)}</div>` : ""}
   </div>`;
     }
 
@@ -174,11 +185,22 @@
       return step * mag;
     }
 
+    /* X-axis category labels: horizontal when they fit, rotated (and thinned if very many) when crowded.
+       xAxisExtra(n) is the extra bottom space the rotated labels need. */
+    const xAxisRotated = n => n > 8;
+    const xAxisExtra = n => xAxisRotated(n) ? 30 : 0;
+    function xAxisLabel(x, y, text, i, n) {
+      if (!xAxisRotated(n)) return `<text x="${x.toFixed(1)}" y="${y}" text-anchor="middle" class="axis-label">${esc(text)}</text>`;
+      const every = Math.ceil(n / 40);
+      if (i % every !== 0 && i !== n - 1) return "";
+      return `<text transform="translate(${x.toFixed(1)},${y - 4}) rotate(-40)" text-anchor="end" class="axis-label">${esc(text)}</text>`;
+    }
+
     /* Vertical bar chart: 1-2 series, grouped or stacked */
     function vBarChart(categories, series, opts) {
       opts = opts || {};
-      const W = 880, H = opts.height || 220;
-      const padL = 58, padR = 16, padT = 16, padB = 44;
+      const W = 880, H = (opts.height || 220) + xAxisExtra(categories.length);
+      const padL = 58, padR = 16, padT = 16, padB = 44 + xAxisExtra(categories.length);
       const plotW = W - padL - padR, plotH = H - padT - padB;
       const stacked = !!opts.stacked;
       let maxVal = 0;
@@ -220,7 +242,7 @@
           if (stacked) stackY -= h;
         });
         const lx = gx + barsAvail / 2;
-        bars += `<text x="${lx.toFixed(1)}" y="${H - padB + 18}" text-anchor="middle" class="axis-label">${esc(cat)}</text>`;
+        bars += xAxisLabel(lx, H - padB + 18, cat, i, categories.length);
       });
 
       let legend = "";
@@ -276,8 +298,8 @@
     /* Line chart: single series */
     function lineChart(categories, values, color, opts) {
       opts = opts || {};
-      const W = 880, H = opts.height || 340;
-      const padL = 54, padR = 20, padT = 20, padB = 40;
+      const W = 880, H = (opts.height || 340) + xAxisExtra(categories.length);
+      const padL = 54, padR = 20, padT = 20, padB = 40 + xAxisExtra(categories.length);
       const plotW = W - padL - padR, plotH = H - padT - padB;
       const minV = Math.min(...values, 0);
       const maxV = niceMax(Math.max(...values) * 1.15);
@@ -307,7 +329,7 @@
       pts.forEach((p, i) => {
         dots += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4.5" fill="${color}" stroke="var(--surface)" stroke-width="2"><title>${esc(categories[i])}: ${values[i]}%</title></circle>`;
         dots += `<text x="${p[0].toFixed(1)}" y="${(p[1] - 12).toFixed(1)}" text-anchor="middle" class="axis-label" style="font-weight:700">${values[i]}%</text>`;
-        dots += `<text x="${p[0].toFixed(1)}" y="${H - padB + 18}" text-anchor="middle" class="axis-label">${esc(categories[i])}</text>`;
+        dots += xAxisLabel(p[0], H - padB + 18, categories[i], i, categories.length);
       });
 
       return `<div class="chart-box">${svgWrap(
@@ -320,8 +342,8 @@
     /* Multi-series line chart */
     function multiLineChart(categories, series, opts) {
       opts = opts || {};
-      const W = 880, H = opts.height || 340;
-      const padL = 70, padR = opts.dualAxis ? 70 : 20, padT = 20, padB = 40;
+      const W = 880, H = (opts.height || 340) + xAxisExtra(categories.length);
+      const padL = 70, padR = opts.dualAxis ? 70 : 20, padT = 20, padB = 40 + xAxisExtra(categories.length);
       const plotW = W - padL - padR, plotH = H - padT - padB;
 
       // Separate primary and secondary axis series
@@ -365,7 +387,7 @@
       let xLabels = "";
       categories.forEach((cat, i) => {
         const x = padL + i * stepX;
-        xLabels += `<text x="${x.toFixed(1)}" y="${H - padB + 18}" text-anchor="middle" class="axis-label">${esc(cat)}</text>`;
+        xLabels += xAxisLabel(x, H - padB + 18, cat, i, categories.length);
       });
 
       let lines = "";
@@ -1054,20 +1076,106 @@
     }
 
 
+    /* ============================================================
+       STEPS 4-8 — every figure below is read from DATA (database-driven,
+       computed per catalog by analytics.py). Nothing here is hardcoded.
+       ============================================================ */
+    const SEGMENT_KEYS = ["audio_premium", "audio_ad_supported", "video_premium", "video_ad_supported"];
+    const SEGMENT_NAMES = {
+      audio_premium: "Audio Premium", audio_ad_supported: "Audio Ad Supported",
+      video_premium: "Video Premium", video_ad_supported: "Video Ad Supported",
+    };
+    const fmtPpd = v => (v === null || v === undefined) ? "-" : Number(v).toFixed(6);
+    const fmtShare = (n, d) => d > 0 ? (n / d * 100).toFixed(1) + "%" : "-";
+
+    function assumption(key, fallback) {
+      const a = DATA.assumptions || {};
+      return (a[key] !== undefined && a[key] !== null) ? a[key] : fallback;
+    }
+    function expectedGrowth() { return state.expectedGrowth !== null && state.expectedGrowth !== undefined ? state.expectedGrowth : assumption("expected_growth", 0); }
+    function expectedDecay() { return state.expectedDecay !== null && state.expectedDecay !== undefined ? state.expectedDecay : assumption("expected_decay", 0); }
+    function projectedTracks() { return state.projTracks !== null && state.projTracks !== undefined ? state.projTracks : assumption("projected_tracks", 0); }
+
+    /* Local territories: the user's choice, else the catalog's default (config or top countries). */
+    function getLocalTerritories() {
+      const all = (DATA.territories && DATA.territories.countries) || [];
+      const defaults = (DATA.territories && DATA.territories.default_local) || [];
+      if (!Array.isArray(state.localTerritories)) {
+        state.localTerritories = defaults.slice();
+      } else if (all.length) {
+        // Drop names that don't exist in this catalog (e.g. restored from an earlier catalog).
+        const valid = state.localTerritories.filter(c => all.includes(c));
+        state.localTerritories = (valid.length || !state.localTerritories.length) ? valid : defaults.slice();
+      }
+      return state.localTerritories;
+    }
+    function localCodeSet() {
+      const codes = (DATA.territories && DATA.territories.codes) || {};
+      return new Set(getLocalTerritories().map(n => codes[n]).filter(Boolean));
+    }
+    function includedAlbums() {
+      return (DATA.albums || []).filter(a => state.includedAlbums && state.includedAlbums[a.album_id]);
+    }
+    /* Current (last-12-month) revenue of the included albums, split by the chosen local territories. */
+    function localRowRevenue() {
+      const local = localCodeSet(), byAlbum = DATA.album_country_revenue || {};
+      let l = 0, r = 0;
+      includedAlbums().forEach(a => {
+        const perCountry = byAlbum[a.album_id];
+        if (!perCountry) return;
+        Object.keys(perCountry).forEach(cc => { if (local.has(cc)) l += perCountry[cc]; else r += perCountry[cc]; });
+      });
+      return { local: l, row: r, total: l + r };
+    }
+
+    /* Steps 4-8 show a notice only when something is wrong (analytics failed, or there is no consumption data). */
+    function dataBanner() {
+      const st = DATA.data_status || {};
+      if (DATA.analytics_error) {
+        return `<div class="notice error"><strong>Analytics could not be computed.</strong> Please retry or contact support.
+          <details class="notice-details"><summary>Technical details</summary>${esc(DATA.analytics_error)}</details></div>`;
+      }
+      if (!st.has_streaming_data) {
+        return `<div class="notice warn"><strong>No consumption data for this catalog.</strong> Figures that depend on consumption are left empty rather than estimated.
+          <details class="notice-details"><summary>Technical details</summary>${esc(st.reason || "")}</details></div>`;
+      }
+      return "";
+    }
+
     /* ---- SCREEN 4 : LOCAL TERRITORY MAPPING ---- */
     var _territoryDDOpen = false;
-    function renderScreen4() {
-      const allCountries = DATA.territories.countries;
-      const regions = DATA.territories.regions;
 
-      // Multi-select dropdown for territory selection
-      const selectedTags = state.localTerritories.map(c =>
+    /* Per-country and Local / RoW group statistics for the current selection. */
+    function territoryModel() {
+      const local = new Set(getLocalTerritories());
+      const rows = (DATA.country_stats || []).map(r => Object.assign({}, r, {
+        streams: (r.audio_streams || 0) + (r.video_streams || 0),
+        isLocal: local.has(r.country),
+      }));
+      const sum = (list, k) => list.reduce((s, r) => s + (r[k] || 0), 0);
+      const ratio = (n, d) => d > 0 ? n / d : null;
+      const group = list => ({
+        streams: sum(list, "streams"),
+        audio: ratio(sum(list, "audio_revenue"), sum(list, "audio_streams")),
+        video: ratio(sum(list, "video_revenue"), sum(list, "video_streams")),
+      });
+      return { rows, all: group(rows), local: group(rows.filter(r => r.isLocal)), row: group(rows.filter(r => !r.isLocal)) };
+    }
+
+    function renderScreen4() {
+      const allCountries = (DATA.territories && DATA.territories.countries) || [];
+      const banner = dataBanner();
+      if (!allCountries.length) {
+        return `${banner}<div class="notice info">No territory data is available for this catalog yet.</div>${navButtons(false)}`;
+      }
+      const selected = getLocalTerritories();
+      const selectedTags = selected.map(c =>
         `<span class="ms-tag"><span class="ms-tag-text">${esc(c)}</span><span class="ms-tag-remove" onclick="event.stopPropagation();removeTerritory('${esc(c)}')">&times;</span></span>`
       ).join("");
 
-      const allSelected = state.localTerritories.length === allCountries.length;
+      const allSelected = selected.length === allCountries.length;
       const optionItems = allCountries.map(c => {
-        const sel = state.localTerritories.includes(c);
+        const sel = selected.includes(c);
         return `<div class="ms-option ${sel ? 'ms-option-sel' : ''}" onclick="event.stopPropagation();toggleTerritory('${esc(c)}')"><span class="ms-checkbox ${sel ? 'ms-checkbox-checked' : ''}"></span>${esc(c)}</div>`;
       }).join("");
 
@@ -1085,32 +1193,34 @@
         </div>
       </div></div>`;
 
-      const rowCount = state.localTerritories.length;
-      const rowRest = allCountries.length - rowCount;
+      const m = territoryModel();
+      const worldwide = `<td><strong>Worldwide</strong></td><td class="num">${fmtNum(m.all.streams)}</td><td class="num">100%</td><td>Worldwide</td><td class="num">${fmtPpd(m.all.audio)}</td><td class="num">${fmtPpd(m.all.video)}</td><td class="num">${fmtShare(m.local.streams, m.all.streams)}</td><td class="num">${fmtShare(m.row.streams, m.all.streams)}</td><td class="num">${fmtPpd(m.local.audio)}</td><td class="num">${fmtPpd(m.local.video)}</td><td class="num">${fmtPpd(m.row.audio)}</td><td class="num">${fmtPpd(m.row.video)}</td><td class="num">${fmtPpd(m.all.audio)}</td>`;
+      const countryRows = m.rows.map(r => {
+        const audio = r.audio_streams > 0 ? r.audio_revenue / r.audio_streams : null;
+        const video = r.video_streams > 0 ? r.video_revenue / r.video_streams : null;
+        return `<td>${esc(r.country)}</td><td class="num">${fmtNum(r.streams)}</td><td class="num">${fmtShare(r.streams, m.all.streams)}</td>`
+          + `<td style="color: ${r.isLocal ? 'var(--tag-green-text)' : 'var(--text-dim)'}">${r.isLocal ? "Local" : "RoW"}</td>`
+          + `<td class="num">${fmtPpd(audio)}</td><td class="num">${fmtPpd(video)}</td>`
+          + `<td class="num">${r.isLocal ? fmtShare(r.streams, m.local.streams) : "-"}</td><td class="num">${r.isLocal ? "-" : fmtShare(r.streams, m.row.streams)}</td>`
+          + `<td class="num">${r.isLocal ? fmtPpd(audio) : "-"}</td><td class="num">${r.isLocal ? fmtPpd(video) : "-"}</td>`
+          + `<td class="num">${r.isLocal ? "-" : fmtPpd(audio)}</td><td class="num">${r.isLocal ? "-" : fmtPpd(video)}</td>`
+          + `<td class="num">${fmtPpd(audio)}</td>`;
+      });
 
       return `
+    ${banner}
     ${selector}
-    <div class="grid grid-2" style="margin-top:6px; position:relative; z-index:1;">
-      ${kpiCard("Local Territories Selected", rowCount)}
-      ${kpiCard("Rest of World (ROW)", rowRest + " territories")}
+    <div class="grid grid-4" style="margin-top:6px; position:relative; z-index:1;">
+      ${kpiCard("Local Territories Selected", selected.length)}
+      ${kpiCard("Rest of World (ROW)", (allCountries.length - selected.length) + " territories")}
+      ${kpiCard("Local Share of Consumption", fmtShare(m.local.streams, m.all.streams))}
+      ${kpiCard("Total Consumption", fmtStreams(m.all.streams), null, true, "streams across all territories")}
     </div>
     <div style="margin-top: 24px; position:relative; z-index:1;">
-      ${sectionTitle("Country Wise Output")}
+      ${sectionTitle("Country Wise Output", "Consumption and PPD (revenue / streams) by territory. Local % and RoW % are each territory's share of its own group.")}
       ${table(
         ["Country Name", "Consumption", "% of total", "Local Mapping", "Audio PPD's", "Video PPD's", "Local %", "Rest of the World %", "Local Audio PPD", "Local Video PPD", "RoW Audio PPD", "RoW Video PPD", "Total Audio PPD"],
-        [
-          `<td><strong>Worldwide</strong></td><td class="num">98,765,432</td><td class="num">100%</td><td>Worldwide</td><td class="num">0.004321</td><td class="num">0.001876</td><td class="num">-</td><td class="num">-</td><td class="num">0.003210</td><td class="num">0.001540</td><td class="num">0.001111</td><td class="num">0.000336</td><td class="num">0.004321</td>`,
-          ...allCountries.map((c, i) => {
-            const isLocal = state.localTerritories.includes(c);
-                const cons = Math.floor(25000000 / (i + 1.2));
-            const pct = Math.max(1, 22 - i) + "%";
-            const audioPpd = (0.002000 + (Math.abs(Math.sin(i)) * 0.005)).toFixed(6);
-            const videoPpd = (0.000800 + (Math.abs(Math.cos(i)) * 0.0015)).toFixed(6);
-            const pctL = isLocal ? Math.floor(30 + Math.abs(Math.sin(i)) * 40) + "%" : "0%";
-            const pctR = !isLocal ? Math.floor(10 + Math.abs(Math.cos(i)) * 50) + "%" : "0%";
-            return `<td>${esc(c)}</td><td class="num">${fmtNum(cons)}</td><td class="num">${pct}</td><td style="color: ${isLocal ? 'var(--tag-green-text)' : 'var(--text-dim)'}">${isLocal ? "Local" : "RoW"}</td><td class="num">${audioPpd}</td><td class="num">${videoPpd}</td><td class="num">${pctL}</td><td class="num">${pctR}</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td>`;
-          })
-        ],
+        [worldwide, ...countryRows],
         { scroll: true }
       )}
     </div>
@@ -1118,19 +1228,21 @@
   `;
     }
     function toggleTerritory(c) {
-      const idx = state.localTerritories.indexOf(c);
-      if (idx >= 0) state.localTerritories.splice(idx, 1); else state.localTerritories.push(c);
+      const sel = getLocalTerritories();
+      const idx = sel.indexOf(c);
+      if (idx >= 0) sel.splice(idx, 1); else sel.push(c);
       _territoryDDOpen = true;
       render();
     }
     function removeTerritory(c) {
-      const idx = state.localTerritories.indexOf(c);
-      if (idx >= 0) state.localTerritories.splice(idx, 1);
+      const sel = getLocalTerritories();
+      const idx = sel.indexOf(c);
+      if (idx >= 0) sel.splice(idx, 1);
       render();
     }
     function toggleAllTerritories() {
-      const allCountries = DATA.territories.countries;
-      if (state.localTerritories.length === allCountries.length) {
+      const allCountries = (DATA.territories && DATA.territories.countries) || [];
+      if (getLocalTerritories().length === allCountries.length) {
         state.localTerritories = [];
       } else {
         state.localTerritories = [...allCountries];
@@ -1155,14 +1267,21 @@
 
 
     /* ---- SCREEN 5 : CATALOG ANALYTICS ---- */
+    /* PPD by year (BOBWA table) when available, otherwise the current PPD per segment. */
     function _ppdTable(keys, label) {
       const ppd = DATA.ppd_by_year || [];
-      if (!ppd.length) return "";
+      const name = k => SEGMENT_NAMES[k] || k;
+      if (!ppd.length) {
+        const current = (DATA.ppd && DATA.ppd.current_splits) || {};
+        if (!keys.some(k => current[k] !== undefined)) return "";
+        const src = (DATA.ppd && DATA.ppd.source === "table") ? "from PPD table" : "assumed";
+        return `<div class="card" style="margin-top:14px;">
+        <div class="kpi-label">${esc(label)} — Current PPD (${src}; no PPD-by-year data)</div>
+        <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Segment</th><th>Current PPD</th></tr></thead>
+        <tbody>${keys.map(k => `<tr><td class="strong">${esc(name(k))}</td><td class="num">${fmtUSD4(current[k] || 0)}</td></tr>`).join("")}</tbody></table></div></div>`;
+      }
       const buckets = ppd.map(p => p.bucket);
-      const rows = keys.map(k => {
-        const name = k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-        return `<tr><td class="strong">${esc(name)}</td>${ppd.map(p => `<td class="num">${fmtUSD4(p[k] || 0)}</td>`).join("")}</tr>`;
-      });
+      const rows = keys.map(k => `<tr><td class="strong">${esc(name(k))}</td>${ppd.map(p => `<td class="num">${fmtUSD4(p[k] || 0)}</td>`).join("")}</tr>`);
       return `<div class="card" style="margin-top:14px;">
         <div class="kpi-label">${esc(label)} — PPD by Year (Wholesale Value / Units)</div>
         <div style="overflow-x:auto">
@@ -1171,9 +1290,11 @@
         </div></div>`;
     }
 
-    /* Shared year-month filter builder */
+    /* Shared year/month filter builder. opts.label names the filter; opts.months=false hides month pickers. */
     var _MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    function _yearMonthFilterHtml(prefix, stateObj) {
+    function _yearMonthFilterHtml(prefix, stateObj, opts) {
+      opts = opts || {};
+      var withMonths = opts.months !== false;
       var fy = stateObj[prefix + "FromYear"];
       var fm = stateObj[prefix + "FromMonth"];
       var ty = stateObj[prefix + "ToYear"];
@@ -1187,13 +1308,13 @@
       var monthOpts2 = '<option value="">--</option>' + _MONTH_NAMES.map(function(n, i) { return '<option value="' + (i + 1) + '"' + (tm == (i + 1) ? ' selected' : '') + '>' + n + '</option>'; }).join("");
 
       var html = '<div style="display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;">';
-      html += '<span style="' + lStyle + '">Release Year:</span>';
+      html += '<span style="' + lStyle + '">' + esc(opts.label || "Period") + ':</span>';
       html += '<span style="' + lStyle + '">From</span>';
       html += '<input type="number" placeholder="Year" min="1900" max="2099" value="' + (fy || '') + '" onchange="set_' + prefix + 'FromYear(this.value)" style="' + inpStyle + '">';
-      html += '<select onchange="set_' + prefix + 'FromMonth(this.value)" style="' + selStyle + '">' + monthOpts + '</select>';
+      if (withMonths) html += '<select onchange="set_' + prefix + 'FromMonth(this.value)" style="' + selStyle + '">' + monthOpts + '</select>';
       html += '<span style="' + lStyle + '">To</span>';
       html += '<input type="number" placeholder="Year" min="1900" max="2099" value="' + (ty || '') + '" onchange="set_' + prefix + 'ToYear(this.value)" style="' + inpStyle + '">';
-      html += '<select onchange="set_' + prefix + 'ToMonth(this.value)" style="' + selStyle + '">' + monthOpts2 + '</select>';
+      if (withMonths) html += '<select onchange="set_' + prefix + 'ToMonth(this.value)" style="' + selStyle + '">' + monthOpts2 + '</select>';
       if (hasFilter) {
         html += '<button onclick="clear_' + prefix + 'Filter()" style="padding:2px 7px;font-size:0.7rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);cursor:pointer;">Clear</button>';
       }
@@ -1201,43 +1322,46 @@
       return html;
     }
 
+    /* Monthly consumption within the Step 5 period filter (year + optional month on both ends). */
+    function _screen5Months() {
+      const fy = state.screen5FromYear ? parseInt(state.screen5FromYear) : null;
+      const ty = state.screen5ToYear ? parseInt(state.screen5ToYear) : null;
+      const from = fy ? fy * 100 + (parseInt(state.screen5FromMonth) || 1) : null;
+      const to = ty ? ty * 100 + (parseInt(state.screen5ToMonth) || 12) : null;
+      return (DATA.consumption_monthly || []).filter(r => {
+        const ym = parseInt(r.ym.slice(0, 4)) * 100 + parseInt(r.ym.slice(5, 7));
+        return (!from || ym >= from) && (!to || ym <= to);
+      });
+    }
+    function _halfYearBuckets(months) {
+      const out = {};
+      months.forEach(r => {
+        const key = r.ym.slice(0, 4) + " " + (parseInt(r.ym.slice(5, 7)) <= 6 ? "Jan-Jun" : "Jul-Dec");
+        if (!out[key]) { out[key] = { bucket: key }; SEGMENT_KEYS.forEach(s => out[key][s] = 0); }
+        SEGMENT_KEYS.forEach(s => out[key][s] += r[s] || 0);
+      });
+      return Object.keys(out).sort().map(k => out[k]);
+    }
+
     function renderScreen5() {
-
-      let matrix = DATA.consumption_matrix;
       const ageSplit = DATA.catalog_age_split || {};
-      const marketGrowth = DATA.market_growth || {};
-
-      var fromYear5 = state.screen5FromYear ? parseInt(state.screen5FromYear) : null;
-      var toYear5 = state.screen5ToYear ? parseInt(state.screen5ToYear) : null;
-
-      // Filter consumption matrix by year range
-      if (fromYear5 || toYear5) {
-        matrix = matrix.filter(function(m) {
-          var match = m.bucket.match(/(\d{4})/);
-          if (!match) return true;
-          var yr = parseInt(match[1]);
-          if (fromYear5 && yr < fromYear5) return false;
-          if (toYear5 && yr > toYear5) return false;
-          return true;
-        });
-      }
-
-      const buckets = matrix.map(m => m.bucket.replace(/ H1$/," Jan-Jun").replace(/ H2$/," Jul-Dec"));
+      const mg = DATA.market_growth || {};
+      const status = DATA.data_status || {};
+      const matrix = _halfYearBuckets(_screen5Months());
+      const fromYear5 = state.screen5FromYear ? parseInt(state.screen5FromYear) : null;
+      const toYear5 = state.screen5ToYear ? parseInt(state.screen5ToYear) : null;
+      const buckets = matrix.map(m => m.bucket);
 
       const tabs = ["All", "Audio", "Video", "Premium", "Ad Supported", "Growth Trend"];
       let tabContent = "";
       const t = state.analyticsTab;
-      if (t === 0) {
-        let g = DATA.growth_trend || [];
-        var growthMap = {};
-        g.forEach(function(x) { growthMap[String(x.year)] = x.yoy_growth_pct; });
-
-        var growthAligned = matrix.map(function(m) {
-          var match = m.bucket.match(/(\d{4})/);
-          if (!match) return 0;
-          return growthMap[match[1]] || 0;
-        });
-
+      const fmtAxis = v => fmtStreams(v);
+      if (t < 5 && !matrix.length) {
+        tabContent = `<div class="notice info">${status.has_streaming_data ? "No consumption in the selected period." : "No consumption data to chart."}</div>`;
+      } else if (t === 0) {
+        const growthByYear = {};
+        (DATA.growth_trend || []).forEach(function(x) { growthByYear[String(x.year)] = x.yoy_growth_pct; });
+        const growthAligned = matrix.map(m => growthByYear[m.bucket.slice(0, 4)] || 0);
         const series = [
           { name: "Audio Premium", color: "#E1261C", data: matrix.map(m => m.audio_premium) },
           { name: "Audio Ad Supported", color: "#8A8A8A", data: matrix.map(m => m.audio_ad_supported) },
@@ -1272,19 +1396,33 @@
         ], { stacked: false }) +
           _ppdTable(["audio_ad_supported", "video_ad_supported"], "Ad Supported");
       } else {
-        let g = DATA.growth_trend || [];
-        if (fromYear5) { g = g.filter(function(x) { return parseInt(x.year) >= fromYear5; }); }
-        if (toYear5) { g = g.filter(function(x) { return parseInt(x.year) <= toYear5; }); }
-        tabContent = lineChart(g.map(x => x.year), g.map(x => x.yoy_growth_pct), "#E1261C");
+        let g = (DATA.growth_trend || []).filter(x => x.yoy_growth_pct !== null && x.yoy_growth_pct !== undefined);
+        if (fromYear5) g = g.filter(x => parseInt(x.year) >= fromYear5);
+        if (toYear5) g = g.filter(x => parseInt(x.year) <= toYear5);
+        if (!g.length) {
+          tabContent = `<div class="notice info">No growth trend available${status.has_streaming_data ? " for the selected period" : ""} (needs at least two years of consumption).</div>`;
+        } else {
+          const partial = g.filter(x => x.partial);
+          const mSrc = mg.market_source === "config" ? "configured" : "assumed";
+          tabContent = lineChart(g.map(x => x.year + (x.partial ? "*" : "")), g.map(x => x.yoy_growth_pct), "#E1261C")
+            + (partial.length ? `<div class="section-caption">* Like-for-like: compared over only the months both years have data (${partial.map(x => x.year + ": " + x.months_compared + " months").join(", ")}).</div>` : "")
+            + `<p><strong>Market Growth Comparison:</strong> Artist Growth <strong>${mg.artist_growth_pct}%</strong>${mg.growth_year ? " (" + mg.growth_year + ")" : ""} vs `
+            + `Market Growth <strong>${mg.market_growth_pct === null || mg.market_growth_pct === undefined ? "n/a" : mg.market_growth_pct + "%"}</strong> (${mSrc} benchmark)</p>`;
+        }
       }
 
-      var filterHtml = _yearMonthFilterHtml("screen5", state);
+      const first = status.first_month ? status.first_month.slice(0, 4) : "", last = status.latest_month ? status.latest_month.slice(0, 4) : "";
+      const filterHtml = _yearMonthFilterHtml("screen5", state, { label: "Period" });
+      const basis = ageSplit.basis === "streams" ? "share of streams, by release year"
+        : ageSplit.basis === "albums" ? "share of albums (no consumption data)" : "no release-year data";
+      const growthDelta = mg.growth_year ? `${mg.growth_year} vs ${mg.growth_year - 1}` : null;
 
       return `
+    ${dataBanner()}
     <div class="grid grid-3">
-      ${kpiCard("Catalog from Releases older 10Years", (ageSplit.older_than_10y_pct ?? 0) + "%")}
-      ${kpiCard("Catalog from last 5 years Releases", (ageSplit.recent_releases_pct ?? 0) + "%")}
-      ${kpiCard("Artist Growth", (marketGrowth.artist_growth_pct ?? 0) + "%", "vs prior year", true)}
+      ${kpiCard("Catalog from Releases older " + (ageSplit.older_years || 10) + " Years", (ageSplit.older_than_10y_pct ?? 0) + "%", null, true, basis)}
+      ${kpiCard("Catalog from last " + (ageSplit.recent_years || 5) + " years Releases", (ageSplit.recent_releases_pct ?? 0) + "%", null, true, basis)}
+      ${kpiCard("Artist Growth", (mg.artist_growth_pct ?? 0) + "%", growthDelta, (mg.artist_growth_pct ?? 0) >= 0, mg.growth_basis || "")}
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
       <div class="subtabs" style="margin-bottom:0;">
@@ -1292,6 +1430,7 @@
       </div>
       ${filterHtml}
     </div>
+    ${first ? `<div class="section-caption" style="margin:0 0 6px;">Data available ${esc(status.first_month)} to ${esc(status.latest_month)}. Streams shown per half-year.</div>` : ""}
     ${tabContent}
     ${navButtons(false)}
   `;
@@ -1349,53 +1488,58 @@
       var fromYear6 = state.screen6FromYear ? parseInt(state.screen6FromYear) : null;
       var toYear6 = state.screen6ToYear ? parseInt(state.screen6ToYear) : null;
       var hasFilter = fromYear6 || toYear6;
+      var rr = localRowRevenue();
+      var allRy = DATA.release_year_analysis || [];
 
-      var ryData;
+      var ryData = [];
       var chartTitle = '';
-
       if (hasFilter) {
-        // Use cross-tab: filter by release year, show consumption per year
+        // Cross-tab: filter by release year, show consumption per year
         var aggregated = _aggregateByConsumptionYear(fromYear6, toYear6);
         if (aggregated && aggregated.length) {
           ryData = aggregated;
           chartTitle = '<div style="font-size:0.8rem;color:var(--fg);opacity:0.7;margin-bottom:4px;">Yearly consumption of ' + (fromYear6 || '...') + (toYear6 && toYear6 !== fromYear6 ? ' – ' + toYear6 : '') + ' releases</div>';
         } else {
-          // Fallback: filter release_year_analysis by release year range
-          ryData = DATA.release_year_analysis.filter(function(r) {
-            var match = r.bucket.match(/(\d{4})/);
-            if (!match) return true;
-            var yr = parseInt(match[1]);
+          ryData = allRy.filter(function(r) {
+            var yr = parseInt(r.bucket);
             if (fromYear6 && yr < fromYear6) return false;
             if (toYear6 && yr > toYear6) return false;
             return true;
           });
         }
       } else {
-        // No filter: show total lifetime streams per release year (original view)
-        ryData = DATA.release_year_analysis;
+        // No filter: total consumption per release year
+        ryData = allRy;
       }
 
       const buckets = ryData.map(r => r.bucket);
       const tabs = ["Consumption", "Revenue", "Growth"];
       const t = state.revenueTab;
       let chart = "";
-      if (t === 0) chart = vBarChart(buckets, [{ name: "Streams", color: "#E1261C", data: ryData.map(r => r.consumption_streams) }], { valueFormatter: v => (v / 1e6).toFixed(0) + "M", height: 220 });
-      else if (t === 1) chart = vBarChart(buckets, [{ name: "Revenue", color: "#2A63C7", data: ryData.map(r => r.revenue_usd) }], { valueFormatter: v => "$" + (v / 1000000).toFixed(1) + "M", height: 220 });
+      if (!ryData.length) {
+        chart = `<div class="notice info">${hasFilter ? "No consumption for the selected release years." : "No release-year analysis available: there is no consumption data for this catalog."}</div>`;
+      } else if (t === 0) chart = vBarChart(buckets, [{ name: "Streams", color: "#E1261C", data: ryData.map(r => r.consumption_streams) }], { valueFormatter: v => fmtStreams(v), height: 220 });
+      else if (t === 1) chart = vBarChart(buckets, [{ name: "Revenue", color: "#2A63C7", data: ryData.map(r => r.revenue_usd) }], { valueFormatter: v => fmtUSD(v), height: 220 });
       else chart = vBarChart(buckets, [{ name: "YoY Growth %", color: "#1E9E5A", data: ryData.map(r => r.yoy_growth_pct) }], { valueFormatter: v => v.toFixed(0) + "%", height: 220 });
 
-      const rows = ryData.map(r => `<td class="strong">${esc(r.bucket)}</td><td class="num">${(r.consumption_streams / 1000000).toFixed(1)}M</td><td class="num">${fmtUSD(r.revenue_usd)}</td><td class="num">${r.yoy_growth_pct}%</td>`);
+      const rows = ryData.map(r => `<td class="strong">${esc(r.bucket)}</td><td class="num">${fmtStreams(r.consumption_streams)}</td><td class="num">${fmtUSD(r.revenue_usd)}</td><td class="num">${r.yoy_growth_pct}%</td>`);
 
+      const ppd = DATA.ppd || {};
+      const ppdSource = ppd.source === "table" ? "PPD table" + (ppd.latest_year ? " (" + ppd.latest_year + ")" : "") : "assumed";
       const ppdRows = [
-        ...Object.entries(DATA.ppd.current_splits).map(([k, v]) => `<td>Current</td><td class="strong">${esc(k)}</td><td class="num">${fmtUSD4(v)}</td>`)
+        ...Object.entries(ppd.current_splits || {}).map(([k, v]) => `<td>Current</td><td class="strong">${esc(SEGMENT_NAMES[k] || k)}</td><td class="num">${fmtUSD4(v)}</td>`),
+        ...Object.entries(ppd.future_splits || {}).map(([k, v]) => `<td>Future-State</td><td class="strong">${esc(SEGMENT_NAMES[k] || k)}</td><td class="num">${fmtUSD4(v)}</td>`),
       ];
 
-      var filterHtml = _yearMonthFilterHtml("screen6", state);
+      var filterHtml = _yearMonthFilterHtml("screen6", state, { label: "Release Year", months: false });
 
       return `
-    ${sectionTitle("Local / ROW Revenue Output")}
-    <div class="grid grid-2">
-      ${kpiCard("Local Revenue", fmtUSD(DATA.local_row_revenue.local_revenue_usd))}
-      ${kpiCard("ROW Revenue", fmtUSD(DATA.local_row_revenue.row_revenue_usd))}
+    ${dataBanner()}
+    ${sectionTitle("Local / ROW Revenue Output", "Current (last 12 months) revenue of the albums included in Step 3, split by the local territories chosen in Step 4.")}
+    <div class="grid grid-3">
+      ${kpiCard("Local Revenue", fmtUSD(rr.local), null, true, fmtShare(rr.local, rr.total) + " of current revenue")}
+      ${kpiCard("ROW Revenue", fmtUSD(rr.row), null, true, fmtShare(rr.row, rr.total) + " of current revenue")}
+      ${kpiCard("Current Annual Revenue", fmtUSD(rr.total), null, true, "last 12 months")}
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
       <div class="subtabs" style="margin-bottom:0;">
@@ -1405,9 +1549,9 @@
     </div>
     ${chartTitle}
     ${chart}
-    ${table([hasFilter ? "Consumption Year" : "Release Year Bucket", "Consumption", "Revenue (USD)", "YoY Growth %"], rows)}
+    ${ryData.length ? table([hasFilter ? "Consumption Year" : "Release Year Bucket", "Consumption", "Revenue (USD)", "YoY Growth %"], rows) : ""}
 
-    ${table(["Split Type", "Segment", "PPD (USD)"], ppdRows)}
+    ${ppdRows.length ? sectionTitle("PPD Splits", "Source: " + ppdSource + ". Future-State applies the configured uplift (" + (ppd.uplift_pct ?? assumption("ppd_future_uplift_pct", 0)) + "%) to current PPD.") + table(["Split Type", "Segment", "PPD (USD)"], ppdRows) : ""}
     ${navButtons(false)}
   `;
     }
@@ -1423,42 +1567,53 @@
     function renderScreen7() {
       const filter = state.albumFilter;
       const yearFilter = state.albumYearFilter || [];
-      const albumsWithStatus = DATA.albums.map(a => Object.assign({}, a, { Status: state.includedAlbums[a.album_id] ? "Include" : "Exclude" }));
+      const albums = DATA.albums || [];
+      if (!albums.length) {
+        return `${dataBanner()}<div class="notice info">No albums available. Complete Steps 1-3 first.</div>${navButtons(false)}`;
+      }
+      const albumsWithStatus = albums.map(a => Object.assign({}, a, { Status: state.includedAlbums[a.album_id] ? "Include" : "Exclude" }));
       let view = filter === "All" ? albumsWithStatus : albumsWithStatus.filter(a => a.Status === filter);
       if (yearFilter.length > 0) {
         view = view.filter(a => yearFilter.includes(a.release_year));
       }
+      view = view.slice().sort((a, b) => (b.current_revenue_usd || 0) - (a.current_revenue_usd || 0) || String(a.album_name).localeCompare(String(b.album_name)));
 
-      // Get unique release years for dropdown
-      const allYears = [...new Set(DATA.albums.map(a => a.release_year))].sort((a, b) => b - a);
+      // Unique release years for the dropdown
+      const allYears = [...new Set(albums.map(a => a.release_year).filter(y => y > 0))].sort((a, b) => b - a);
 
-      const rows = view.map(a => `<td class="strong">${esc(a.album_name)}</td><td>${esc(a.release_type)}</td><td class="num">${a.release_year}</td><td class="num">${a.track_count}</td><td class="num">${fmtNum(a.total_consumption_streams || 0)}</td><td class="num">${fmtUSD(a.current_revenue_usd)}</td><td>${a.Status === "Include" ? tag("Include", "green") : tag("Exclude", "red")}</td>`);
+      const rows = view.map(a => `<td class="strong">${esc(a.album_name)}</td><td>${esc(a.release_type)}</td><td class="num">${a.release_year || "—"}</td><td class="num">${fmtNum(a.track_count || 0)}</td><td class="num">${a.has_streaming_data ? fmtNum(a.total_consumption_streams || 0) : "—"}</td><td class="num">${a.has_streaming_data ? fmtUSD(a.current_revenue_usd || 0) : "—"}</td><td>${a.Status === "Include" ? tag("Include", "green") : tag("Exclude", "red")}</td>`);
 
       const included = albumsWithStatus.filter(a => a.Status === "Include");
-      const totalTracks = included.reduce((s, a) => s + a.track_count, 0);
-      const totalRevenue = included.reduce((s, a) => s + a.current_revenue_usd, 0);
+      const totalTracks = included.reduce((s, a) => s + (a.track_count || 0), 0);
+      const totalRevenue = included.reduce((s, a) => s + (a.current_revenue_usd || 0), 0);
       const totalConsumption = included.reduce((s, a) => s + (a.total_consumption_streams || 0), 0);
+      const withData = included.filter(a => a.has_streaming_data).length;
 
       const albumChartTab = state.albumChartTab || 0;
-      const sortedInc = included.slice().sort((a, b) => albumChartTab === 1
-        ? (b.total_consumption_streams || 0) - (a.total_consumption_streams || 0)
-        : b.current_revenue_usd - a.current_revenue_usd);
+      const metric = a => albumChartTab === 1 ? (a.total_consumption_streams || 0) : (a.current_revenue_usd || 0);
+      const TOP_N = 25;
+      const sortedInc = included.filter(a => metric(a) > 0).sort((a, b) => metric(b) - metric(a));
+      const shown = sortedInc.slice(0, TOP_N);
 
       const chartTabs = ["Revenue", "Consumption"];
       const chartTabsHtml = chartTabs.map((tb, i) =>
         `<button class="subtab ${i === albumChartTab ? "active" : ""}" onclick="setAlbumChartTab(${i})">${tb}</button>`
       ).join("");
 
-      const chart = albumChartTab === 1
-        ? hBarChart(sortedInc.map(a => a.album_name), sortedInc.map(a => a.total_consumption_streams || 0), "#2A63C7", { valueFormatter: v => (v / 1e6).toFixed(1) + "M", height: Math.max(200, sortedInc.length * 22 + 60) })
-        : hBarChart(sortedInc.map(a => a.album_name), sortedInc.map(a => a.current_revenue_usd), "#E1261C", { valueFormatter: v => "$" + (v / 1000).toFixed(0) + "K", height: Math.max(200, sortedInc.length * 22 + 60) });
+      const chart = !shown.length
+        ? `<div class="notice info">None of the included albums has consumption data.</div>`
+        : albumChartTab === 1
+          ? hBarChart(shown.map(a => a.album_name), shown.map(a => a.total_consumption_streams || 0), "#2A63C7", { valueFormatter: v => fmtStreams(v), height: Math.max(200, shown.length * 22 + 60) })
+          : hBarChart(shown.map(a => a.album_name), shown.map(a => a.current_revenue_usd || 0), "#E1261C", { valueFormatter: v => fmtUSD(v), height: Math.max(200, shown.length * 22 + 60) });
+      const chartNote = sortedInc.length > TOP_N ? `Top ${TOP_N} of ${sortedInc.length} included albums with consumption.` : "";
 
       return `
+    ${dataBanner()}
     <div class="grid grid-4" style="margin-top:16px;">
-      ${kpiCard("Albums in Scope", included.length)}
+      ${kpiCard("Albums in Scope", included.length, null, true, withData + " with consumption data")}
       ${kpiCard("Total Tracks", fmtNum(totalTracks))}
-      ${kpiCard("Total Consumption", (totalConsumption / 1000000).toLocaleString("en-US", {maximumFractionDigits: 1}) + "M")}
-      ${kpiCard("Total Current Revenue", fmtUSD(totalRevenue))}
+      ${kpiCard("Total Consumption", fmtStreams(totalConsumption), null, true, "streams in the data window")}
+      ${kpiCard("Total Current Revenue", fmtUSD(totalRevenue), null, true, "last 12 months")}
     </div>
     <div style="display:flex; gap:100px; flex-wrap:wrap; align-items:flex-end; padding-top: 10px;">
       <div class="field" style="max-width:220px;">
@@ -1472,8 +1627,8 @@
         ${multiSelectYear("ms-year-s7", allYears, yearFilter, "toggleAlbumYear")}
       </div>
     </div>
-    ${table(["Album", "Release Type", "Release Year", "Track Count", "Total Consumption (Streams)", "Current Revenue (USD)", "Status"], rows, { scroll: true })}
-    ${sectionTitle("Album Analysis Chart (Included)")}
+    ${table(["Album", "Release Type", "Release Year", "Track Count", "Total Consumption (Streams)", "Current Revenue (LTM, USD)", "Status"], rows, { scroll: true })}
+    ${sectionTitle("Album Analysis Chart (Included)", chartNote)}
     <div class="subtabs">${chartTabsHtml}</div>
     ${chart}
     ${navButtons(false)}
@@ -1499,33 +1654,46 @@
 
     /* ---- SCREEN 8 : CORPORATE EXPORT ---- */
     function computeExport() {
-      const included = DATA.albums.filter(a => state.includedAlbums[a.album_id]);
-      const activeNr = DATA.new_release_tracks.filter(d => state.excludedFlags.indexOf(d.flag) === -1);
-      const avgStreams = activeNr.length ? Math.round((activeNr.reduce((s, d) => s + d.first_12m_streams_millions, 0) / activeNr.length) * 100) / 100 : 0;
+      const included = includedAlbums();
+      const rr = localRowRevenue();
+      const age = DATA.catalog_age_split || {};
+      const mg = DATA.market_growth || {};
+      const status = DATA.data_status || {};
+      const ppd = DATA.ppd || {};
+      const activeNr = (DATA.new_release_tracks || []).filter(d => state.excludedFlags.indexOf(d.flag) === -1);
+      const avgStreamsM = activeNr.length ? Math.round(activeNr.reduce((s, d) => s + d.first_12m_streams, 0) / activeNr.length / 1e6 * 10000) / 10000 : 0;
+      const yr = mg.growth_year ? " " + mg.growth_year : "";
       return {
-        "Catalog Name": state.resolvedEntity || state.searchTerm,
-        "Local Territories": state.localTerritories.join(", "),
+        "Catalog Name": state.searchTerm || "Unknown",
+        "Local Territories": getLocalTerritories().join(", "),
         "Total Albums (Included)": included.length,
-        "Total Tracks (Included)": included.reduce((s, a) => s + a.track_count, 0),
-        "Current Annual Revenue (USD)": included.reduce((s, a) => s + a.current_revenue_usd, 0),
-        "Local Revenue (USD)": DATA.local_row_revenue.local_revenue_usd,
-        "ROW Revenue (USD)": DATA.local_row_revenue.row_revenue_usd,
-        "Catalog Age Split — Older than 10y": DATA.catalog_age_split.older_than_10y_pct + "%",
-        "Catalog Age Split — Recent": DATA.catalog_age_split.recent_releases_pct + "%",
-        "YoY Growth 2025": DATA.market_growth.artist_growth_pct + "%",
-        "Market Growth 2025": DATA.market_growth.market_growth_pct + "%",
-        "Expected Growth Assumption (Analyst)": state.expectedGrowth + "%",
-        "Expected Decay Assumption (Analyst)": state.expectedDecay + "%",
-        "Average New-Track Streams (M)": avgStreams,
-        "Projected Next Album Streams (M)": Math.round(avgStreams * 10 * 10) / 10,
+        "Total Tracks (Included)": included.reduce((s, a) => s + (a.track_count || 0), 0),
+        "Current Annual Revenue (USD)": Math.round(included.reduce((s, a) => s + (a.current_revenue_usd || 0), 0) * 100) / 100,
+        "Local Revenue (USD)": Math.round(rr.local * 100) / 100,
+        "ROW Revenue (USD)": Math.round(rr.row * 100) / 100,
+        "Catalog Age Split — Older than 10y": (age.older_than_10y_pct ?? 0) + "%",
+        "Catalog Age Split — Recent": (age.recent_releases_pct ?? 0) + "%",
+        ["YoY Growth" + yr]: (mg.artist_growth_pct ?? 0) + "%",
+        ["Market Growth" + yr]: (mg.market_growth_pct ?? 0) + "%",
+        "Expected Growth Assumption (Analyst)": expectedGrowth() + "%",
+        "Expected Decay Assumption (Analyst)": expectedDecay() + "%",
+        "Average New-Track Streams (M)": avgStreamsM,
+        "Projected Next Album Streams (M)": Math.round(avgStreamsM * projectedTracks() * 10000) / 10000,
+        "Consumption Data Through": status.latest_month || "n/a",
+        "Current Revenue Basis": status.ltm_window ? "Last 12 months (" + status.ltm_window + ")" : "n/a",
+        "PPD Source": ppd.source === "table" ? "PPD table" + (ppd.latest_year ? " " + ppd.latest_year : "") : "Assumed",
         _included: included,
       };
     }
+    function _exportDisplay(key, value) {
+      return /\(USD\)$/.test(key) ? fmtUSD(value) : value;
+    }
     function renderScreen8() {
       const exp = computeExport();
-      const rows = Object.entries(exp).filter(([k]) => k !== "_included").map(([k, v]) => `<td class="strong">${esc(k)}</td><td class="num">${esc(v)}</td>`);
+      const rows = Object.entries(exp).filter(([k]) => k !== "_included").map(([k, v]) => `<td class="strong">${esc(k)}</td><td class="num">${esc(_exportDisplay(k, v))}</td>`);
 
       return `
+    ${dataBanner()}
     <div class="grid grid-2" style="margin-top:16px;">
       ${kpiCard("Current Annual Revenue", fmtUSD(exp["Current Annual Revenue (USD)"]))}
       ${kpiCard("Local / ROW Split", fmtUSD(exp["Local Revenue (USD)"]) + " / " + fmtUSD(exp["ROW Revenue (USD)"]))}
@@ -1544,13 +1712,35 @@
       try {
         const exp = computeExport();
         const wb = XLSX.utils.book_new();
-        const expRows = Object.entries(exp).filter(([k]) => k !== "_included").map(([k, v]) => ({ "Corporate Template Field": k, "Value": String(v) }));
+        // Numbers stay numeric in the workbook so the corporate model can use them directly.
+        const expRows = Object.entries(exp).filter(([k]) => k !== "_included").map(([k, v]) => ({ "Corporate Template Field": k, "Value": v }));
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expRows), "Corporate Template Inputs");
 
-        const albumRows = exp._included.map(a => ({ album_name: a.album_name, release_type: a.release_type, release_year: a.release_year, track_count: a.track_count, current_revenue_usd: a.current_revenue_usd }));
+        const albumRows = exp._included.map(a => ({
+          album_name: a.album_name, release_type: a.release_type, release_year: a.release_year, track_count: a.track_count || 0,
+          total_consumption_streams: a.total_consumption_streams || 0, current_revenue_usd: a.current_revenue_usd || 0,
+        }));
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(albumRows), "Album Detail");
 
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(DATA.release_year_analysis), "Release-Year Analysis");
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(DATA.release_year_analysis || []), "Release-Year Analysis");
+
+        const tm = territoryModel();
+        const territoryRows = tm.rows.map(r => ({
+          country: r.country, mapping: r.isLocal ? "Local" : "RoW", consumption_streams: r.streams,
+          audio_ppd: r.audio_streams > 0 ? r.audio_revenue / r.audio_streams : null,
+          video_ppd: r.video_streams > 0 ? r.video_revenue / r.video_streams : null,
+          ltm_revenue_usd: r.ltm_revenue,
+        }));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(territoryRows), "Territory Output");
+
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(_halfYearBuckets(DATA.consumption_monthly || [])), "Consumption (Half-Year)");
+
+        const ppd = DATA.ppd || {};
+        const ppdRows = [].concat(
+          Object.entries(ppd.current_splits || {}).map(([k, v]) => ({ split_type: "Current", segment: SEGMENT_NAMES[k] || k, ppd_usd: v })),
+          Object.entries(ppd.future_splits || {}).map(([k, v]) => ({ split_type: "Future-State", segment: SEGMENT_NAMES[k] || k, ppd_usd: v }))
+        );
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ppdRows), "PPD");
 
         const fname = "corporate_valuation_inputs_" + String(exp["Catalog Name"]).replace(/\s+/g, "_") + ".xlsx";
         XLSX.writeFile(wb, fname);
@@ -1602,17 +1792,7 @@
             localStorage.setItem('__wb_step2_table', s2tbl);
           }
         } catch(e) {}
-        var quickProgress = 0;
-        var quickTimer = setInterval(function() {
-          quickProgress += 10;
-          state.pipeline.progress = Math.min(100, quickProgress);
-          savePipelineState();
-          render();
-          if (quickProgress >= 100) {
-            clearInterval(quickTimer);
-            completePipeline();
-          }
-        }, 300);
+        completePipeline();
         return;
       }
       // Start polling progress
@@ -1652,21 +1832,9 @@
             render();
             return;
           }
-          // If was running but backend already created the table, animate to 100%
+          // If it was running and the backend has already created the table, it is done.
           if (state.pipeline.status === "running" && window.__CATALOG_CREATED__) {
-            var startPct = state.pipeline.progress || 0;
-            var animProgress = startPct;
-            render();
-            var animTimer = setInterval(function() {
-              animProgress += 5;
-              state.pipeline.progress = Math.min(100, animProgress);
-              savePipelineState();
-              render();
-              if (animProgress >= 100) {
-                clearInterval(animTimer);
-                completePipeline();
-              }
-            }, 200);
+            completePipeline();
             return;
           }
           // If was running, resume polling
@@ -1697,17 +1865,8 @@
           failPipeline("The process took more than the allowed time so the session has been killed.", state.pipeline.failedStep || 2);
           return;
         }
-        var estimatedMs = state.pipeline.estimatedMinutes * 60 * 1000;
-        var pct = Math.min(95, Math.round((elapsed / estimatedMs) * 95));
-        state.pipeline.progress = pct;
-        savePipelineState();
+        // Elapsed time on the card only; real progress is streamed by the server.
         render();
-        // Broadcast progress to Streamlit for backend coordination
-        try {
-          var ch = new BroadcastChannel("wb_pipeline_sync");
-          ch.postMessage({ type: "pipeline_progress", progress: pct, status: state.pipeline.status });
-          ch.close();
-        } catch(e) {}
       }, 3000);
     }
 
@@ -1845,26 +2004,17 @@
     function renderPipelineProgress() {
       var p = state.pipeline;
       if (p.status === "running") {
-        var elapsed = p.startedAt ? Math.round((Date.now() - p.startedAt) / 60000) : 0;
-        // Compute remaining from actual progress rate (elapsed / pct), not fixed countdown
-        var remaining = 0;
-        if (p.progress > 0 && p.progress < 100) {
-          var totalEstMs = (Date.now() - p.startedAt) / (p.progress / 100);
-          remaining = Math.max(0, Math.round((totalEstMs - (Date.now() - p.startedAt)) / 60000));
-        }
+        var secs = p.startedAt ? Math.max(0, Math.round((Date.now() - p.startedAt) / 1000)) : 0;
+        var elapsedLabel = Math.floor(secs / 60) + ":" + String(secs % 60).padStart(2, "0");
         return `
       <div class="pipeline-overlay">
         <div class="pipeline-card">
           <div class="pipeline-title">Building Catalog Table</div>
-          <div class="pipeline-subtitle">Creating table with selected artists, labels, and ISRC codes.<br>This process typically takes a minutes.</div>
-          <div class="progress-label">Progress</div>
+          <div class="pipeline-subtitle">Reading your selection from the Luminate tables.<br>Live progress appears as soon as the data starts loading.</div>
           <div class="progress-bar-wrap">
-            <div class="progress-bar-fill animated" style="width: ${p.progress}%"></div>
+            <div class="progress-bar-fill indeterminate"></div>
           </div>
-          <div class="progress-pct">${p.progress}%</div>
-          <div class="pipeline-elapsed">
-            Elapsed: ${elapsed} min &nbsp;|&nbsp; Est. remaining: ~${remaining} min
-          </div>
+          <div class="pipeline-elapsed">Elapsed: ${elapsedLabel}</div>
           <div style="margin-top:16px;font-size:0.82rem;color:var(--text-mute)">
             You can close this page and check back later. Progress is saved automatically.
           </div>
@@ -2291,6 +2441,8 @@
       // Label shows the mode you will switch TO on next click
       $("#themeLabel").textContent = t === "dark" ? "LIGHT" : "DARK";
       localStorage.setItem("wb_theme", t);
+      // Keep the host page (the native Welcome / login screens) in the same mode.
+      try { window.parent.document.documentElement.setAttribute("data-wb-theme", t); } catch (e) {}
     }
     $("#themeToggle").addEventListener("click", () => {
       setTheme(state.theme === "dark" ? "light" : "dark");

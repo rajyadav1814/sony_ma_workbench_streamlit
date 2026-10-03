@@ -1372,6 +1372,37 @@
       color: var(--text);
     }
 
+    .notice.warn {
+      background: rgba(185, 134, 31, 0.1);
+      border-color: rgba(185, 134, 31, 0.4);
+      color: var(--text);
+    }
+
+    .notice.error {
+      background: rgba(225, 38, 28, 0.08);
+      border-color: rgba(225, 38, 28, 0.35);
+      color: var(--text);
+    }
+
+    .notice-details {
+      margin-top: 8px;
+      font-size: .78rem;
+      color: var(--text-dim);
+    }
+
+    .notice-details summary {
+      cursor: pointer;
+      color: var(--text-mute);
+      font-weight: 600;
+    }
+
+    .kpi-note {
+      font-size: .72rem;
+      color: var(--text-mute);
+      margin-top: 8px;
+      line-height: 1.4;
+    }
+
     /* ---------- CHART CONTAINER ---------- */
     .chart-box {
       background: var(--surface);
@@ -1600,6 +1631,14 @@
       top: 0; left: 0; right: 0; bottom: 0;
       background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
       animation: shimmer 1.8s infinite;
+    }
+    .progress-bar-fill.indeterminate {
+      width: 35% !important;
+      animation: indeterminate-slide 1.4s ease-in-out infinite;
+    }
+    @keyframes indeterminate-slide {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(300%); }
     }
     @keyframes shimmer {
       0% { transform: translateX(-100%); }
