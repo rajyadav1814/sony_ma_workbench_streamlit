@@ -1528,7 +1528,6 @@
       const ppdSource = ppd.source === "table" ? "PPD table" + (ppd.latest_year ? " (" + ppd.latest_year + ")" : "") : "assumed";
       const ppdRows = [
         ...Object.entries(ppd.current_splits || {}).map(([k, v]) => `<td>Current</td><td class="strong">${esc(SEGMENT_NAMES[k] || k)}</td><td class="num">${fmtUSD4(v)}</td>`),
-        ...Object.entries(ppd.future_splits || {}).map(([k, v]) => `<td>Future-State</td><td class="strong">${esc(SEGMENT_NAMES[k] || k)}</td><td class="num">${fmtUSD4(v)}</td>`),
       ];
 
       var filterHtml = _yearMonthFilterHtml("screen6", state, { label: "Release Year", months: false });
@@ -1551,7 +1550,7 @@
     ${chart}
     ${ryData.length ? table([hasFilter ? "Consumption Year" : "Release Year Bucket", "Consumption", "Revenue (USD)", "YoY Growth %"], rows) : ""}
 
-    ${ppdRows.length ? sectionTitle("PPD Splits", "Source: " + ppdSource + ". Future-State applies the configured uplift (" + (ppd.uplift_pct ?? assumption("ppd_future_uplift_pct", 0)) + "%) to current PPD.") + table(["Split Type", "Segment", "PPD (USD)"], ppdRows) : ""}
+    ${ppdRows.length ? sectionTitle("PPD Splits", "Source: " + ppdSource + ".") + table(["Split Type", "Segment", "PPD (USD)"], ppdRows) : ""}
     ${navButtons(false)}
   `;
     }
