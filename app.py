@@ -605,6 +605,18 @@ if "session_id" not in st.session_state:
     if not st.session_state.pop("_login_transition", False):
         st.rerun()
 
+# Keep the login across a browser refresh. A refresh starts a new Streamlit session with empty
+# session_state, and the only thing that survives is the URL. Without these two params a refresh on
+# Step 1 (the workbench adds its own wb_* params only once you navigate) logs the user out.
+# Setting query params does not trigger a rerun.
+_keep_in_url = {
+    "wb_email": st.session_state.get("user_email", ""),
+    "wb_session_id": st.session_state.get("session_id", ""),
+}
+_keep_in_url = {k: v for k, v in _keep_in_url.items() if v and v != "local"}
+if any(st.query_params.get(k) != v for k, v in _keep_in_url.items()):
+    st.query_params.update(_keep_in_url)
+
 # ─── Read query params for JS → Python communication ────────────────────────
 params = st.query_params
 wb_step_payload = {}
