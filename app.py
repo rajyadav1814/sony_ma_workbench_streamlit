@@ -6,12 +6,13 @@ Streamlit host shell: auth gate, data loading, HTML workbench rendering.
 import os
 import json
 import base64
+import time
 from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-from config import DB, SCHEMA, MAX_STEP, MIN_STEP, STEP_LABELS
+from config import CACHE_TTL_SECONDS, DB, SCHEMA, MAX_STEP, MIN_STEP, STEP_LABELS
 from session_manager import (
     is_valid_email,
     clamp_step,
@@ -23,10 +24,10 @@ from session_manager import (
     complete_session,
     abandon_open_sessions,
 )
-from data_loader import load_data_from_postgres, search_catalog, create_isrc_temp_table, compute_analytics_from_monthly_detail, search_artists_dropdown, search_labels_dropdown
+from data_loader import load_data_from_postgres, search_catalog, ensure_isrc_temp_table, compute_analytics_from_monthly_detail
 from build_progress import NULL_PROGRESS, BuildProgress
 from catalog_builder import create_step1_selection_table, create_catalog_table, create_step2_table, _make_table_name, pull_monthly_detail
-from postgres_connection import PostgresConnection
+from postgres_connection import get_connection, SESSION_CONNECTION_KEY
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -363,7 +364,7 @@ if _transition_loader_requested:
 
 if _params.get("wb_logout") == "1":
     for key in list(st.session_state.keys()):
-        if key != "_session_tables_checked":
+        if key not in ("_session_tables_checked", SESSION_CONNECTION_KEY):
             del st.session_state[key]
     for key in list(st.query_params.keys()):
         if key.startswith("wb_"):
@@ -382,7 +383,8 @@ if not st.session_state.get("user_email") and "wb_email" not in _params:
     st.stop()
 
 # ─── PostgreSQL connection ──────────────────────────────────────────────────
-conn = PostgresConnection()
+# One connection per browser session, reused across reruns (opening one costs seconds).
+conn = get_connection()
 session = conn.session()
 
 if "_session_tables_checked" not in st.session_state:
@@ -448,7 +450,7 @@ if _params.get("wb_action") == "move_resume":
     from session_manager import get_open_sessions as _get_open_sessions
     open_sessions = _get_open_sessions(session, _email) if _email else []
     for key in list(st.session_state.keys()):
-        if key not in ("user_email", "_session_tables_checked"):
+        if key not in ("user_email", "_session_tables_checked", SESSION_CONNECTION_KEY):
             del st.session_state[key]
     if _home_loader:
         st.session_state["_home_loader"] = _home_loader
@@ -467,7 +469,7 @@ _do_reset = _params.get("wb_reset") == "1" or st.session_state.get("_reset_pendi
 if _do_reset:
     _email = st.session_state.get("user_email", "")
     for key in list(st.session_state.keys()):
-        if key not in ("user_email", "welcomed", "_session_tables_checked"):
+        if key not in ("user_email", "welcomed", "_session_tables_checked", SESSION_CONNECTION_KEY):
             del st.session_state[key]
     if _email:
         new_sess = create_new_session(session, _email)
@@ -626,39 +628,33 @@ with st.container():
     _live_match_cache = st.session_state.get("_live_ambiguity_matches", {})
     if not isinstance(_live_match_cache, dict):
         _live_match_cache = {}
-    if wb_search_term and wb_search_term.strip():
-        _live_search_key = wb_search_term.strip()
-        try:
-            live_results = search_catalog(conn, wb_search_mode, _live_search_key)
-            if live_results:
-                _live_match_cache[_live_search_key] = live_results
-                st.session_state["_live_ambiguity_matches"] = _live_match_cache
-        except Exception:
-            pass
-    if _live_match_cache:
-        injected_data["ambiguity_matches"].update(_live_match_cache)
 
-    _dropdown_term = wb_dropdown_search.strip() if wb_dropdown_search else wb_search_term.strip()
-    _dropdown_mode = wb_dropdown_mode if wb_dropdown_search else wb_search_mode
-    if _dropdown_term and len(_dropdown_term) >= 2:
-        try:
-            if _dropdown_mode == "Label":
-                injected_data["dropdown_results"] = search_labels_dropdown(conn, _dropdown_term)
-            else:
-                injected_data["dropdown_results"] = search_artists_dropdown(conn, _dropdown_term)
-        except Exception:
-            injected_data["dropdown_results"] = []
-    else:
-        injected_data["dropdown_results"] = []
-
+    # The ISRC upload table has to exist before an "ISRC List" search can use it.
     if wb_isrc_file and wb_isrc_filename:
         try:
-            csv_bytes = base64.b64decode(wb_isrc_file)
-            user_email = st.session_state.get("user_email", "unknown")
-            temp_table = create_isrc_temp_table(conn, csv_bytes, user_email, wb_isrc_filename)
-            st.session_state["_isrc_temp_table"] = temp_table
-        except Exception:
-            pass
+            ensure_isrc_temp_table(
+                conn, base64.b64decode(wb_isrc_file), st.session_state.get("user_email", "unknown"), wb_isrc_filename
+            )
+        except Exception as e:
+            st.session_state["_isrc_error"] = f"{type(e).__name__}: {e}"
+
+    # The workbench re-sends the search term on every reload, so only query when it is new for this
+    # mode and ISRC upload (or the stored answer has aged out). Empty answers count; failed queries do not.
+    if wb_search_term and wb_search_term.strip():
+        _live_search_key = wb_search_term.strip()
+        _memo_key = f"{wb_search_mode}|{st.session_state.get('_isrc_hash', '')}|{_live_search_key}"
+        _search_memo = st.session_state.setdefault("_search_memo", {})
+        _memo_hit = _search_memo.get(_memo_key)
+        if not _memo_hit or time.time() - _memo_hit[0] > CACHE_TTL_SECONDS:
+            try:
+                _search_memo[_memo_key] = (time.time(), search_catalog(conn, wb_search_mode, _live_search_key))
+            except Exception as e:
+                st.session_state["_search_error"] = f"{type(e).__name__}: {e}"
+        if _memo_key in _search_memo and _search_memo[_memo_key][1]:
+            _live_match_cache[_live_search_key] = _search_memo[_memo_key][1]
+            st.session_state["_live_ambiguity_matches"] = _live_match_cache
+    if _live_match_cache:
+        injected_data["ambiguity_matches"].update(_live_match_cache)
 
     user_email = st.session_state.get("user_email", "")
     catalog_created = False
@@ -704,11 +700,12 @@ with st.container():
             else:
                 try:
                     step1_result = None
-                    if _selected_entities:
-                        step1_result = create_step1_selection_table(session, _search_term, user_email, _selected_entities, search_mode=_search_mode, session_id=_sid, progress=_progress)
-                    else:
-                        # Fallback: if no entities selected but we have a search term, use it as the entity.
-                        step1_result = create_step1_selection_table(session, _search_term, user_email, [_search_term], search_mode=_search_mode, session_id=_sid, progress=_progress)
+                    # Fallback: if no entities selected but we have a search term, use it as the entity.
+                    step1_result = create_step1_selection_table(
+                        session, _search_term, user_email, _selected_entities or [_search_term],
+                        search_mode=_search_mode, session_id=_sid, progress=_progress,
+                        isrc_table=st.session_state.get("_isrc_temp_table"),
+                    )
                     if step1_result and step1_result["status"] == "success" and step1_result.get("row_count", 0) > 0:
                         step1_table = step1_result["table_name"]
                         st.session_state["_step1_table_name"] = step1_table
@@ -791,6 +788,8 @@ with st.container():
         "album_count": len(injected_data.get("albums", [])),
         "table_creation_error": st.session_state.get("_table_creation_error", ""),
         "album_load_error": st.session_state.get("_album_load_error", ""),
+        "search_error": st.session_state.get("_search_error", ""),
+        "isrc_error": st.session_state.get("_isrc_error", ""),
         "selected_entities": _selected_entities[:5] if _selected_entities else [],
         "search_term": _search_term,
         "current_wb_step": current_wb_step,

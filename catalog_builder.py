@@ -5,6 +5,7 @@
 Naming convention: STEP{N}_{searchterm}_{username}_{sessionid}
 """
 
+import hashlib
 import re
 from datetime import datetime
 from build_progress import NULL_PROGRESS
@@ -39,16 +40,33 @@ def _sanitize_identifier(name: str) -> str:
     return sanitized[:60] if sanitized else "UNKNOWN"
 
 
+PG_IDENTIFIER_LIMIT = 63   # PostgreSQL silently truncates longer names
+
+
 def _make_table_name(step: int, user_email: str, entity_name: str, session_id: str = "") -> str:
+    """STEP{n}_{entity}_{user}_{session}, never longer than PostgreSQL's identifier limit.
+
+    The session id (or timestamp) is the unique part and sits at the end, so a long search term must
+    not push it past the limit: PostgreSQL would truncate it away and two catalogues could end up
+    sharing one table. Only the entity and user parts are shortened, and a short hash of the full
+    values keeps shortened names distinct.
+    """
     user_part = _sanitize_identifier(
         user_email.split("@")[0] if "@" in user_email else user_email
     )
     entity_part = _sanitize_identifier(entity_name)
     if session_id:
-        sid_part = _sanitize_identifier(session_id.replace("-", ""))
-        return f"STEP{step}_{entity_part}_{user_part}_{sid_part}"
-    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    return f"STEP{step}_{entity_part}_{user_part}_{ts}"
+        unique = _sanitize_identifier(session_id.replace("-", ""))
+    else:
+        unique = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    prefix = f"STEP{step}"
+    budget = PG_IDENTIFIER_LIMIT - len(prefix) - len(unique) - 3     # three separating underscores
+    if len(entity_part) + len(user_part) > budget:
+        digest = hashlib.sha1(f"{entity_name}|{user_email}".encode("utf-8")).hexdigest()[:6].upper()
+        budget -= len(digest) + 1
+        user_part = user_part[: max(4, budget // 3)]
+        entity_part = f"{entity_part[: max(1, budget - len(user_part))]}_{digest}"
+    return f"{prefix}_{entity_part}_{user_part}_{unique}"[:PG_IDENTIFIER_LIMIT]
 
 
 def get_step2_table_name(user_email: str, entity_name: str, session_id: str = "") -> str:
@@ -56,7 +74,7 @@ def get_step2_table_name(user_email: str, entity_name: str, session_id: str = ""
     return f"{DB}.{_make_table_name(2, user_email, entity_name, session_id)}"
 
 
-def create_step1_selection_table(session, entity_name: str, user_email: str, selected_entities: list, search_mode: str = "Artist", session_id: str = "", progress=NULL_PROGRESS) -> dict:
+def create_step1_selection_table(session, entity_name: str, user_email: str, selected_entities: list, search_mode: str = "Artist", session_id: str = "", progress=NULL_PROGRESS, isrc_table: str | None = None) -> dict:
     """Store the user's selected ambiguity entities into STEP1_{searchterm}_{username}_{sessionid}.
 
     Queries the configured Luminate source schema for release groups.
@@ -92,20 +110,50 @@ def create_step1_selection_table(session, entity_name: str, user_email: str, sel
             matched = 0
             for batch in _batches(entities):
                 placeholders = ", ".join(f":{index + 1}" for index in range(len(batch)))
+                lowered = ", ".join(f"LOWER(:{index + 1})" for index in range(len(batch)))
                 offset = len(batch)
+                # LOWER(col) IN (...) lets PostgreSQL use the lower(display_artist) / lower(imprint)
+                # indexes (a bare "col IN (...)" cannot, and scans the whole view); the exact
+                # comparison keeps "Shakira" and "SHAKIRA" as the separate entities the user picked.
                 session.sql(
                     f"""INSERT INTO {fqn}
                         (MRELG_ID, ENTITY_NAME, SEARCH_TERM, SEARCH_MODE, SELECTED_BY, SESSION_ID)
                         SELECT DISTINCT MRELG_ID, {source_column}, :{offset + 1},
                             :{offset + 2}, :{offset + 3}, :{offset + 4}
                         FROM {luminate_view}
-                        WHERE {source_column} IN ({placeholders})""",
+                        WHERE LOWER({source_column}) IN ({lowered})
+                          AND {source_column} IN ({placeholders})""",
                     params=batch + [entity_name, search_mode, user_email, session_id],
                 ).collect()
                 matched += len(batch)
                 progress.advance(matched / len(entities), f"{matched:,} of {len(entities):,} {noun} matched")
+        elif entities and search_mode == "ISRC List" and isrc_table:
+            # The picked entities are "TITLE — ARTIST" labels (see data_loader.search_catalog). Resolve them
+            # to release groups through the uploaded ISRCs so STEP2 has real MRELG_IDs to join on.
+            progress.stage("match", f"Matching release groups for {len(entities):,} selected titles")
+            matched = 0
+            for batch in _batches(entities):
+                placeholders = ", ".join(f":{index + 1}" for index in range(len(batch)))
+                offset = len(batch)
+                session.sql(
+                    f"""INSERT INTO {fqn}
+                        (MRELG_ID, ENTITY_NAME, SEARCH_TERM, SEARCH_MODE, SELECTED_BY, SESSION_ID)
+                        SELECT DISTINCT v.MRELG_ID, v.TITLE || ' — ' || v.DISPLAY_ARTIST, :{offset + 1},
+                            :{offset + 2}, :{offset + 3}, :{offset + 4}
+                        FROM {luminate_view} v
+                        WHERE v.TITLE || ' — ' || v.DISPLAY_ARTIST IN ({placeholders})
+                          AND v.MRELG_ID IN (
+                              SELECT relg.MRELG_ID
+                              FROM {LUMINATE_DATABASE}.{LUMINATE_SCHEMA}.VW_SONG_MRELG_MAP_DS relg
+                              JOIN {LUMINATE_DATABASE}.{LUMINATE_SCHEMA}.VW_SONG_DS sng ON relg.SONG_ID = sng.SONG_ID
+                              WHERE sng.ISRC IN (SELECT ISRC FROM {isrc_table})
+                          )""",
+                    params=batch + [entity_name, search_mode, user_email, session_id],
+                ).collect()
+                matched += len(batch)
+                progress.advance(matched / len(entities), f"{matched:,} of {len(entities):,} titles matched")
         elif entities:
-            # ISRC List or other modes: preserve the uploaded/selected values.
+            # Other modes: preserve the selected values.
             values_sql = ", ".join(
                 f"(NULL, :{index + 1}, :{len(entities) + 1}, :{len(entities) + 2}, "
                 f":{len(entities) + 3}, :{len(entities) + 4})"

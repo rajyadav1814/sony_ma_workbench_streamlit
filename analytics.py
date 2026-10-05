@@ -191,12 +191,21 @@ def load_ppd(session, assumptions: dict) -> dict:
 
 
 # ─── SQL ──────────────────────────────────────────────────────────────────────
-def _catalog_ctes(step2_table: str) -> str:
-    """CTEs shared by every query: the catalog's recordings and their monthly consumption.
+# Working tables, built once per catalog by _materialize() and read by every query below.
+# They are TEMP (private to the user's connection) and must be dropped before being rebuilt.
+_WORK_TABLES = ("wb_fact", "wb_rec_year", "wb_catalog_recs", "wb_rec_map")
 
-    ``rec_map`` is de-duplicated (PRODUCT_CATALOG has one row per product, so joining it
-    directly would multiply consumption). ``fact`` is recording-level and never fanned out
-    by release group, so catalog totals are exact; album totals join ``rec_map`` explicitly.
+
+def _materialize(session, step2_table: str) -> None:
+    """Build the catalog's working tables: its recordings and their monthly consumption.
+
+    Previously these were CTEs repeated inside each of the six analytics queries, so the monthly
+    summary was joined and aggregated six times per catalog. Doing it once keeps each result
+    identical while the heavy work happens a single time.
+
+    ``wb_rec_map`` is de-duplicated (PRODUCT_CATALOG has one row per product, so joining it
+    directly would multiply consumption). ``wb_fact`` is recording-level and never fanned out
+    by release group, so catalog totals are exact; album totals join ``wb_rec_map`` explicitly.
     """
     segment = (
         # STRPOS rather than LIKE: the adapter runs queries through psycopg, where a literal '%' is a placeholder.
@@ -204,58 +213,61 @@ def _catalog_ctes(step2_table: str) -> str:
         "|| '_' || "
         "CASE WHEN STRPOS(LOWER(COALESCE(mr.COMMERCIAL_MODEL, '')), 'premium') > 0 THEN 'premium' ELSE 'ad_supported' END"
     )
-    return f"""
-        catalog_groups AS (
+    groups = f"""WITH catalog_groups AS (
             SELECT DISTINCT MRELG_ID, DISPLAY_ARTIST,
                    CAST(COALESCE(RELEASE_YEAR, EXTRACT(YEAR FROM RELEASE_DATE)) AS INT) AS RELEASE_YEAR
             FROM {step2_table}
-        ),
-        rec_map AS (
-            SELECT DISTINCT pc.RECORDING_ID AS MR_ID, pc.RELEASE_GROUP_ID AS MRELG_ID
-            FROM {PRODUCT_CATALOG_TABLE} pc
-            JOIN catalog_groups g ON g.MRELG_ID = pc.RELEASE_GROUP_ID
-            WHERE pc.RECORDING_ID IS NOT NULL
-        ),
-        catalog_recs AS (
-            SELECT MR_ID FROM rec_map
-            UNION
-            SELECT rec.MR_ID
-            FROM {RECORDING_TABLE} rec
-            JOIN (SELECT DISTINCT LOWER(DISPLAY_ARTIST) AS ARTIST_KEY FROM catalog_groups) a
-              ON LOWER(rec.DISPLAY_ARTIST) = a.ARTIST_KEY
-        ),
-        rec_year AS (
-            SELECT cr.MR_ID,
-                   CAST(COALESCE(
-                       MIN(g.RELEASE_YEAR),
-                       MAX(EXTRACT(YEAR FROM r.FIRST_STREAM_DATE)),
-                       MAX(EXTRACT(YEAR FROM r.RECORDING_DATE)),
-                       MAX(r.RELEASE_YEAR)
-                   ) AS INT) AS RELEASE_YEAR
-            FROM catalog_recs cr
-            LEFT JOIN rec_map rm ON rm.MR_ID = cr.MR_ID
-            LEFT JOIN catalog_groups g ON g.MRELG_ID = rm.MRELG_ID
-            LEFT JOIN {RECORDING_TABLE} r ON r.MR_ID = cr.MR_ID
-            GROUP BY cr.MR_ID
-        ),
-        fact AS (
-            SELECT mr.MR_ID, mr.MONTH_START_DATE, mr.COUNTRY_CODE, {segment} AS SEGMENT,
-                   SUM(mr.QUANTITY) AS QTY
-            FROM {MONTHLY_SUMMARY_TABLE} mr
-            JOIN catalog_recs cr ON cr.MR_ID = mr.MR_ID
-            WHERE mr.MONTH_START_DATE IS NOT NULL
-              AND mr.COUNTRY_CODE IS NOT NULL
-              AND COALESCE(mr.METRIC_CATEGORY, 'Streams') = 'Streams'
-              AND COALESCE(mr.CONTENT_TYPE, '') NOT IN ({_sql_list(EXCLUDED_CONTENT_TYPES)})
-              AND COALESCE(mr.COMMERCIAL_MODEL, '') NOT IN ({_sql_list(EXCLUDED_COMMERCIAL_MODELS)})
-            GROUP BY 1, 2, 3, 4
-        ),
-        latest AS (SELECT MAX(MONTH_START_DATE) AS LATEST_MONTH FROM fact)
-    """
+        )"""
+    session.sql("DROP TABLE IF EXISTS " + ", ".join(f"pg_temp.{t}" for t in _WORK_TABLES)).collect()
+    session.sql(f"""
+        CREATE TEMP TABLE wb_rec_map AS {groups}
+        SELECT DISTINCT pc.RECORDING_ID AS MR_ID, pc.RELEASE_GROUP_ID AS MRELG_ID
+        FROM {PRODUCT_CATALOG_TABLE} pc
+        JOIN catalog_groups g ON g.MRELG_ID = pc.RELEASE_GROUP_ID
+        WHERE pc.RECORDING_ID IS NOT NULL""").collect()
+    session.sql(f"""
+        CREATE TEMP TABLE wb_catalog_recs AS {groups}
+        SELECT MR_ID FROM wb_rec_map
+        UNION
+        SELECT rec.MR_ID
+        FROM {RECORDING_TABLE} rec
+        JOIN (SELECT DISTINCT LOWER(DISPLAY_ARTIST) AS ARTIST_KEY FROM catalog_groups) a
+          ON LOWER(rec.DISPLAY_ARTIST) = a.ARTIST_KEY""").collect()
+    session.sql(f"""
+        CREATE TEMP TABLE wb_rec_year AS {groups}
+        SELECT cr.MR_ID,
+               CAST(COALESCE(
+                   MIN(g.RELEASE_YEAR),
+                   MAX(EXTRACT(YEAR FROM r.FIRST_STREAM_DATE)),
+                   MAX(EXTRACT(YEAR FROM r.RECORDING_DATE)),
+                   MAX(r.RELEASE_YEAR)
+               ) AS INT) AS RELEASE_YEAR
+        FROM wb_catalog_recs cr
+        LEFT JOIN wb_rec_map rm ON rm.MR_ID = cr.MR_ID
+        LEFT JOIN catalog_groups g ON g.MRELG_ID = rm.MRELG_ID
+        LEFT JOIN {RECORDING_TABLE} r ON r.MR_ID = cr.MR_ID
+        GROUP BY cr.MR_ID""").collect()
+    session.sql(f"""
+        CREATE TEMP TABLE wb_fact AS
+        SELECT mr.MR_ID, mr.MONTH_START_DATE, mr.COUNTRY_CODE, {segment} AS SEGMENT,
+               SUM(mr.QUANTITY) AS QTY
+        FROM {MONTHLY_SUMMARY_TABLE} mr
+        JOIN wb_catalog_recs cr ON cr.MR_ID = mr.MR_ID
+        WHERE mr.MONTH_START_DATE IS NOT NULL
+          AND mr.COUNTRY_CODE IS NOT NULL
+          AND COALESCE(mr.METRIC_CATEGORY, 'Streams') = 'Streams'
+          AND COALESCE(mr.CONTENT_TYPE, '') NOT IN ({_sql_list(EXCLUDED_CONTENT_TYPES)})
+          AND COALESCE(mr.COMMERCIAL_MODEL, '') NOT IN ({_sql_list(EXCLUDED_COMMERCIAL_MODELS)})
+        GROUP BY 1, 2, 3, 4""").collect()
+    # TEMP tables are never auto-analyzed; without statistics the planner guesses badly on the joins below.
+    session.sql("ANALYZE " + ", ".join(_WORK_TABLES)).collect()
 
 
-def _query(session, step2_table: str, select_sql: str) -> list[dict]:
-    return session.sql(f"WITH {_catalog_ctes(step2_table)} {select_sql}").collect()
+def _query(session, select_sql: str) -> list[dict]:
+    """Run ``select_sql`` against the working tables (``latest`` = the newest month with consumption)."""
+    return session.sql(
+        f"WITH latest AS (SELECT MAX(MONTH_START_DATE) AS LATEST_MONTH FROM wb_fact) {select_sql}"
+    ).collect()
 
 
 _IS_LTM = "(f.MONTH_START_DATE > l.LATEST_MONTH - INTERVAL '12 months')"
@@ -390,13 +402,14 @@ def compute_analytics(session, step2_table: str, albums: list, progress=NULL_PRO
     progress.note("PPD from table" if ppd["source"] == "table" else "No PPD table found, using standard rates")
 
     progress.stage("an_coverage", "Finding the recordings in this catalog")
-    coverage_row = (_query(session, step2_table, """
-        SELECT (SELECT COUNT(*) FROM catalog_recs) AS CATALOG_RECORDINGS,
-               (SELECT COUNT(DISTINCT MR_ID) FROM rec_map) AS MAPPED_RECORDINGS,
-               (SELECT COUNT(DISTINCT MR_ID) FROM fact) AS RECORDINGS_WITH_STREAMS,
-               (SELECT COALESCE(SUM(QTY), 0) FROM fact) AS TOTAL_STREAMS,
-               (SELECT COALESCE(SUM(f.QTY), 0) FROM fact f
-                 WHERE NOT EXISTS (SELECT 1 FROM rec_map rm WHERE rm.MR_ID = f.MR_ID)) AS UNATTRIBUTED_STREAMS
+    _materialize(session, step2_table)
+    coverage_row = (_query(session, """
+        SELECT (SELECT COUNT(*) FROM wb_catalog_recs) AS CATALOG_RECORDINGS,
+               (SELECT COUNT(DISTINCT MR_ID) FROM wb_rec_map) AS MAPPED_RECORDINGS,
+               (SELECT COUNT(DISTINCT MR_ID) FROM wb_fact) AS RECORDINGS_WITH_STREAMS,
+               (SELECT COALESCE(SUM(QTY), 0) FROM wb_fact) AS TOTAL_STREAMS,
+               (SELECT COALESCE(SUM(f.QTY), 0) FROM wb_fact f
+                 WHERE NOT EXISTS (SELECT 1 FROM wb_rec_map rm WHERE rm.MR_ID = f.MR_ID)) AS UNATTRIBUTED_STREAMS
     """) or [{}])[0]
     coverage = {
         "catalog_recordings": int(_num(coverage_row.get("CATALOG_RECORDINGS"))),
@@ -412,9 +425,9 @@ def compute_analytics(session, step2_table: str, albums: list, progress=NULL_PRO
     # Monthly consumption (catalog level) -> Step 5 charts, growth, filters.
     progress.stage("an_monthly", "Reading monthly consumption")
     monthly = defaultdict(lambda: dict.fromkeys(SEGMENTS, 0))
-    for row in _query(session, step2_table, """
+    for row in _query(session, """
         SELECT f.MONTH_START_DATE AS MONTH, f.SEGMENT, SUM(f.QTY) AS QTY
-        FROM fact f GROUP BY 1, 2 ORDER BY 1"""):
+        FROM wb_fact f GROUP BY 1, 2 ORDER BY 1"""):
         monthly[_month_key(row["MONTH"])][row["SEGMENT"]] += int(_num(row["QTY"]))
     months = sorted(monthly)
     first_month, latest_month = months[0], months[-1]
@@ -425,13 +438,13 @@ def compute_analytics(session, step2_table: str, albums: list, progress=NULL_PRO
 
     # Release-year x consumption-year x country x segment cube -> Steps 4, 5, 6.
     progress.stage("an_cube", "Splitting consumption by territory and release year")
-    cube = _query(session, step2_table, f"""
+    cube = _query(session, f"""
         SELECT ry.RELEASE_YEAR AS RELEASE_YEAR,
                CAST(EXTRACT(YEAR FROM f.MONTH_START_DATE) AS INT) AS CONSUMPTION_YEAR,
                f.COUNTRY_CODE AS COUNTRY_CODE, f.SEGMENT AS SEGMENT,
                {_IS_LTM} AS IS_LTM, SUM(f.QTY) AS QTY
-        FROM fact f CROSS JOIN latest l
-        LEFT JOIN rec_year ry ON ry.MR_ID = f.MR_ID
+        FROM wb_fact f CROSS JOIN latest l
+        LEFT JOIN wb_rec_year ry ON ry.MR_ID = f.MR_ID
         GROUP BY 1, 2, 3, 4, 5""")
 
     progress.note(f"{len(cube):,} territory / release-year combinations")
@@ -485,18 +498,18 @@ def compute_analytics(session, step2_table: str, albums: list, progress=NULL_PRO
     progress.stage("an_albums", "Counting tracks per album")
     track_counts = {
         str(r["MRELG_ID"]): int(r["TRACKS"])
-        for r in _query(session, step2_table, "SELECT MRELG_ID, COUNT(DISTINCT MR_ID) AS TRACKS FROM rec_map GROUP BY 1")
+        for r in _query(session, "SELECT MRELG_ID, COUNT(DISTINCT MR_ID) AS TRACKS FROM wb_rec_map GROUP BY 1")
     }
     progress.advance(0.4, "Attributing consumption to albums")
     album_total = defaultdict(float)
     album_revenue = defaultdict(float)
     album_ltm_revenue = defaultdict(float)
     album_country_revenue = defaultdict(lambda: defaultdict(float))
-    for row in _query(session, step2_table, f"""
+    for row in _query(session, f"""
         SELECT rm.MRELG_ID AS MRELG_ID, f.COUNTRY_CODE AS COUNTRY_CODE, f.SEGMENT AS SEGMENT,
                {_IS_LTM} AS IS_LTM, SUM(f.QTY) AS QTY
-        FROM fact f CROSS JOIN latest l
-        JOIN rec_map rm ON rm.MR_ID = f.MR_ID
+        FROM wb_fact f CROSS JOIN latest l
+        JOIN wb_rec_map rm ON rm.MR_ID = f.MR_ID
         GROUP BY 1, 2, 3, 4"""):
         album_id, qty = str(row["MRELG_ID"]), _num(row["QTY"])
         revenue = qty * ppd_for(row["COUNTRY_CODE"], row["SEGMENT"])
@@ -527,7 +540,7 @@ def compute_analytics(session, step2_table: str, albums: list, progress=NULL_PRO
     # New-release tracks: first-12-month consumption of recent recordings.
     progress.stage("an_tracks", "Analysing first-year performance of new releases")
     window_start = latest_year - int(assumptions["new_release_window_years"])
-    tracks = _new_release_tracks(session, step2_table, window_start)
+    tracks = _new_release_tracks(session, window_start)
     flag_new_release_tracks(tracks, latest_month)
     for track in tracks:
         track["first_12m_streams_millions"] = round(track["first_12m_streams"] / 1_000_000, 4)
@@ -595,10 +608,9 @@ def half_year_matrix(consumption_monthly: list[dict]) -> list[dict]:
     return [{"bucket": label, **values} for label, values in sorted(buckets.items())]
 
 
-def _new_release_tracks(session, step2_table: str, window_start_year: int) -> list[dict]:
+def _new_release_tracks(session, window_start_year: int) -> list[dict]:
     rows = session.sql(f"""
-        WITH {_catalog_ctes(step2_table)},
-        rec_month AS (SELECT MR_ID, MONTH_START_DATE, SUM(QTY) AS QTY FROM fact GROUP BY 1, 2),
+        WITH rec_month AS (SELECT MR_ID, MONTH_START_DATE, SUM(QTY) AS QTY FROM wb_fact GROUP BY 1, 2),
         rec_first AS (SELECT MR_ID, MIN(MONTH_START_DATE) AS FIRST_MONTH FROM rec_month GROUP BY 1),
         rec_info AS (SELECT MR_ID, MAX(TITLE) AS TITLE, MAX(ISRC) AS ISRC FROM {RECORDING_TABLE} GROUP BY 1)
         SELECT m.MR_ID AS MR_ID, i.TITLE AS TITLE, i.ISRC AS ISRC, ry.RELEASE_YEAR AS RELEASE_YEAR,
@@ -608,7 +620,7 @@ def _new_release_tracks(session, step2_table: str, window_start_year: int) -> li
                                    THEN m.MONTH_START_DATE END) AS MONTHS12
         FROM rec_month m
         JOIN rec_first rf ON rf.MR_ID = m.MR_ID
-        JOIN rec_year ry ON ry.MR_ID = m.MR_ID
+        JOIN wb_rec_year ry ON ry.MR_ID = m.MR_ID
         LEFT JOIN rec_info i ON i.MR_ID = m.MR_ID
         WHERE ry.RELEASE_YEAR >= {int(window_start_year)}
         GROUP BY 1, 2, 3, 4, 5

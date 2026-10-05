@@ -211,7 +211,8 @@ def search_catalog(_conn, search_mode: str, search_term: str) -> list[dict]:
     """Run a live Luminate query based on search mode and return ambiguity-style matches.
 
     Uses parameterized queries to prevent SQL injection.
-    Returns a list of dicts: {name, confidence, track_count, recommended}
+    Returns a list of dicts: {name, confidence, track_count, recommended}.
+    Raises if the query fails (an empty list always means "nothing matched").
     """
     if not search_term or not search_term.strip():
         return []
@@ -272,9 +273,9 @@ def search_catalog(_conn, search_mode: str, search_term: str) -> list[dict]:
             return []
 
         return _rank_results(rows)
-
-    except Exception as e:
-        return []
+    except Exception:
+        # Not swallowed: a failed query is not the same as "no matches", and the caller must not cache it.
+        raise
 
 
 def compute_analytics_from_monthly_detail(_session, step2_table: str, _albums_json: str, progress=None) -> dict:
@@ -299,14 +300,39 @@ def compute_analytics_from_monthly_detail(_session, step2_table: str, _albums_js
     return result
 
 
+def _parse_isrcs(csv_data: bytes) -> list[str]:
+    """ISRCs from an uploaded CSV/TXT: header optional, first 'isrc' column (else column 1), de-duplicated.
+
+    Dashes are dropped (US-ABC-12-34567 -> USABC1234567) and values are upper-cased.
+    """
+    import csv as csv_mod
+    import io
+
+    text = csv_data.decode("utf-8-sig", errors="replace")
+    rows = [row for row in csv_mod.reader(io.StringIO(text)) if row and any(cell.strip() for cell in row)]
+    if not rows:
+        return []
+    column = 0
+    header = [cell.strip().lower() for cell in rows[0]]
+    if any("isrc" in cell for cell in header):
+        column = next(i for i, cell in enumerate(header) if "isrc" in cell)
+        rows = rows[1:]
+    seen, isrcs = set(), []
+    for row in rows:
+        value = row[column].strip().upper().replace("-", "") if column < len(row) else ""
+        if value and value not in seen:
+            seen.add(value)
+            isrcs.append(value)
+    return isrcs
+
+
 def create_isrc_temp_table(_conn, csv_data: bytes, user_email: str, filename: str) -> str:
     """Upload a CSV of ISRCs into a temp table named step1_{user}_{filename}_{timestamp}.
 
-    Returns the fully-qualified table name.
+    The table is connection-local, so it lives as long as the user's session connection.
+    Returns the table name.
     """
     import re
-    import io
-    import csv as csv_mod
     from datetime import datetime
 
     def _sanitize(name: str) -> str:
@@ -317,27 +343,29 @@ def create_isrc_temp_table(_conn, csv_data: bytes, user_email: str, filename: st
     user_part = _sanitize(user_email.split("@")[0] if "@" in user_email else user_email)
     file_part = _sanitize(filename.rsplit(".", 1)[0] if "." in filename else filename)
     ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    table_name = f"STEP1_{user_part}_{file_part}_{ts}"
-    # Temporary tables belong to the connection-local PostgreSQL temp schema.
-    fqn = table_name
+    table_name = f"STEP1_{user_part}_{file_part}_{ts}"[:63]
 
     session = _conn.session()
-    session.sql(f"CREATE TEMP TABLE {fqn} (ISRC VARCHAR)").collect()
+    session.sql(f"CREATE TEMP TABLE {table_name} (ISRC VARCHAR)").collect()
+    # COPY: one round-trip for the whole file, and CSV values never become part of the SQL text.
+    session.bulk_insert(table_name, ["ISRC"], [(isrc,) for isrc in _parse_isrcs(csv_data)])
+    return table_name
 
-    # Parse CSV and insert ISRCs
-    text = csv_data.decode("utf-8", errors="replace")
-    reader = csv_mod.reader(io.StringIO(text))
-    isrcs = []
-    for row in reader:
-        if row:
-            val = row[0].strip().upper()
-            if val and val != "ISRC":  # skip header
-                isrcs.append(val)
 
-    # Batch insert in chunks of 500
-    for i in range(0, len(isrcs), 500):
-        batch = isrcs[i:i + 500]
-        values = ", ".join(f"('{v}')" for v in batch)
-        session.sql(f"INSERT INTO {fqn} VALUES {values}").collect()
+def ensure_isrc_temp_table(_conn, csv_data: bytes, user_email: str, filename: str) -> str:
+    """Build the ISRC temp table once per distinct upload.
 
-    return fqn
+    The upload travels in the URL, so it is present on every rerun; without this the table would be
+    rebuilt each time. The same file reuses the existing table while the connection (and so the
+    table) is alive.
+    """
+    import hashlib
+
+    digest = hashlib.sha1(csv_data).hexdigest()
+    table = st.session_state.get("_isrc_temp_table")
+    if table and st.session_state.get("_isrc_hash") == digest:
+        return table
+    table = create_isrc_temp_table(_conn, csv_data, user_email, filename)
+    st.session_state["_isrc_temp_table"] = table
+    st.session_state["_isrc_hash"] = digest
+    return table
