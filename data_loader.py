@@ -331,8 +331,19 @@ def _parse_isrcs(csv_data: bytes) -> list[str]:
     import csv as csv_mod
     import io
 
-    text = csv_data.decode("utf-8-sig", errors="replace")
-    rows = [row for row in csv_mod.reader(io.StringIO(text)) if row and any(cell.strip() for cell in row)]
+    if csv_data[:4] == b"PK\x03\x04":
+        # .xlsx is a zip archive; the upload box accepts it, so read the first worksheet instead of decoding as text.
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(io.BytesIO(csv_data), read_only=True, data_only=True)
+        try:
+            raw_rows = [["" if cell is None else str(cell) for cell in row] for row in workbook.worksheets[0].iter_rows(values_only=True)]
+        finally:
+            workbook.close()
+    else:
+        text = csv_data.decode("utf-8-sig", errors="replace")
+        raw_rows = list(csv_mod.reader(io.StringIO(text)))
+    rows = [row for row in raw_rows if row and any(cell.strip() for cell in row)]
     if not rows:
         return []
     column = 0
