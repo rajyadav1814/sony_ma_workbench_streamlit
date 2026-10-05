@@ -1,6 +1,8 @@
 """Data loading from PostgreSQL tables — cached per session."""
 
 import json
+import threading
+import time
 import streamlit as st
 from config import (
     ANALYTICS_DATABASE,
@@ -247,7 +249,7 @@ def search_catalog(_conn, search_mode: str, search_term: str) -> list[dict]:
                 params=[like_pattern],
             ).collect()
         elif search_mode == "ISRC List":
-            isrc_table = st.session_state.get("_isrc_temp_table")
+            isrc_table = _conn.state.get("isrc_table")
             if not isrc_table:
                 return []
             rows = session.sql(
@@ -278,25 +280,46 @@ def search_catalog(_conn, search_mode: str, search_term: str) -> list[dict]:
         raise
 
 
+@st.cache_resource
+def _analytics_store() -> dict:
+    """Process-wide analytics results keyed by catalog table: {table: (computed_at, result)}."""
+    return {"lock": threading.Lock(), "entries": {}}
+
+
+MAX_CACHED_CATALOGS = 16
+
+
+def invalidate_analytics(step2_table: str) -> None:
+    """Forget cached analytics for a catalog table (call when the table is rebuilt)."""
+    store = _analytics_store()
+    with store["lock"]:
+        store["entries"].pop(step2_table, None)
+
+
 def compute_analytics_from_monthly_detail(_session, step2_table: str, _albums_json: str, progress=None) -> dict:
     """Steps 4-8 analytics for a catalog, derived entirely from database tables.
 
-    Wraps ``analytics.compute_analytics`` with a per-session cache keyed by the catalog table
-    (``st.cache_data`` is deliberately not used: it would replay the progress card's UI calls on
-    a cache hit). Errors propagate and are never cached, so the caller can show them instead of
-    invented data.
+    Wraps ``analytics.compute_analytics`` with a process-wide cache keyed by the catalog table.
+    Every step click reloads the page into a new Streamlit session, so a per-session cache never hit and
+    the whole analysis was recomputed on each click. ``st.cache_data`` is deliberately not used: it would
+    replay the progress card's UI calls on a cache hit. Errors propagate and are never cached, so the
+    caller can show them instead of invented data.
     """
-    import time
     from analytics import compute_analytics
     from build_progress import NULL_PROGRESS
 
-    cache = st.session_state.setdefault("_analytics_cache", {})
-    hit = cache.get(step2_table)
+    store = _analytics_store()
+    with store["lock"]:
+        hit = store["entries"].get(step2_table)
     if hit and time.time() - hit[0] < CACHE_TTL_SECONDS:
+        if progress:
+            progress.note("Using the saved analysis")
         return hit[1]
     result = compute_analytics(_session, step2_table, json.loads(_albums_json), progress or NULL_PROGRESS)
-    cache.clear()  # one catalog at a time per session keeps memory bounded
-    cache[step2_table] = (time.time(), result)
+    with store["lock"]:
+        store["entries"][step2_table] = (time.time(), result)
+        while len(store["entries"]) > MAX_CACHED_CATALOGS:
+            del store["entries"][min(store["entries"], key=lambda t: store["entries"][t][0])]
     return result
 
 
@@ -355,17 +378,15 @@ def create_isrc_temp_table(_conn, csv_data: bytes, user_email: str, filename: st
 def ensure_isrc_temp_table(_conn, csv_data: bytes, user_email: str, filename: str) -> str:
     """Build the ISRC temp table once per distinct upload.
 
-    The upload travels in the URL, so it is present on every rerun; without this the table would be
+    The upload travels in the URL, so it is present on every page load; without this the table would be
     rebuilt each time. The same file reuses the existing table while the connection (and so the
-    table) is alive.
+    table) is alive; a new connection starts with no table and rebuilds it.
     """
     import hashlib
 
     digest = hashlib.sha1(csv_data).hexdigest()
-    table = st.session_state.get("_isrc_temp_table")
-    if table and st.session_state.get("_isrc_hash") == digest:
-        return table
+    if _conn.state.get("isrc_table") and _conn.state.get("isrc_hash") == digest:
+        return _conn.state["isrc_table"]
     table = create_isrc_temp_table(_conn, csv_data, user_email, filename)
-    st.session_state["_isrc_temp_table"] = table
-    st.session_state["_isrc_hash"] = digest
+    _conn.state.update(isrc_table=table, isrc_hash=digest)
     return table

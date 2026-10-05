@@ -16,7 +16,10 @@
           "background:var(--surface,#fff);color:var(--text,#141210);border:1px solid rgba(20,18,14,.12);border-radius:14px;" +
           "box-shadow:0 14px 34px rgba(20,18,14,.14);font:600 15px Inter,Arial,sans-serif;}" +
           "#wb-step-loader .wb-step-loader__spinner{width:34px;height:34px;border:4px solid #E5E1D8;border-top-color:#E1261C;border-radius:50%;animation:wb-step-spin .8s linear infinite;}" +
-          "@keyframes wb-step-spin{to{transform:rotate(360deg)}}";
+          "@keyframes wb-step-spin{to{transform:rotate(360deg)}}" +
+          "@keyframes wb-step-in{from{opacity:0}}" +
+          "#wb-step-loader{animation:wb-step-in .18s ease both;}" +
+          "@media (prefers-reduced-motion:reduce){#wb-step-loader{animation:none}#wb-step-loader .wb-step-loader__spinner{animation-duration:2.4s}}";
         document.head.appendChild(style);
       }
       root.style.position = "relative";

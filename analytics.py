@@ -196,7 +196,7 @@ def load_ppd(session, assumptions: dict) -> dict:
 _WORK_TABLES = ("wb_fact", "wb_rec_year", "wb_catalog_recs", "wb_rec_map")
 
 
-def _materialize(session, step2_table: str) -> None:
+def _materialize(session, step2_table: str, progress=NULL_PROGRESS) -> None:
     """Build the catalog's working tables: its recordings and their monthly consumption.
 
     Previously these were CTEs repeated inside each of the six analytics queries, so the monthly
@@ -219,12 +219,14 @@ def _materialize(session, step2_table: str) -> None:
             FROM {step2_table}
         )"""
     session.sql("DROP TABLE IF EXISTS " + ", ".join(f"pg_temp.{t}" for t in _WORK_TABLES)).collect()
+    progress.advance(0.05, "Linking recordings to their releases")
     session.sql(f"""
         CREATE TEMP TABLE wb_rec_map AS {groups}
         SELECT DISTINCT pc.RECORDING_ID AS MR_ID, pc.RELEASE_GROUP_ID AS MRELG_ID
         FROM {PRODUCT_CATALOG_TABLE} pc
         JOIN catalog_groups g ON g.MRELG_ID = pc.RELEASE_GROUP_ID
         WHERE pc.RECORDING_ID IS NOT NULL""").collect()
+    progress.advance(0.2, "Finding the artists' other recordings")
     session.sql(f"""
         CREATE TEMP TABLE wb_catalog_recs AS {groups}
         SELECT MR_ID FROM wb_rec_map
@@ -233,6 +235,7 @@ def _materialize(session, step2_table: str) -> None:
         FROM {RECORDING_TABLE} rec
         JOIN (SELECT DISTINCT LOWER(DISPLAY_ARTIST) AS ARTIST_KEY FROM catalog_groups) a
           ON LOWER(rec.DISPLAY_ARTIST) = a.ARTIST_KEY""").collect()
+    progress.advance(0.4, "Dating each recording")
     session.sql(f"""
         CREATE TEMP TABLE wb_rec_year AS {groups}
         SELECT cr.MR_ID,
@@ -247,6 +250,7 @@ def _materialize(session, step2_table: str) -> None:
         LEFT JOIN catalog_groups g ON g.MRELG_ID = rm.MRELG_ID
         LEFT JOIN {RECORDING_TABLE} r ON r.MR_ID = cr.MR_ID
         GROUP BY cr.MR_ID""").collect()
+    progress.advance(0.55, "Reading monthly consumption (the longest step)")
     session.sql(f"""
         CREATE TEMP TABLE wb_fact AS
         SELECT mr.MR_ID, mr.MONTH_START_DATE, mr.COUNTRY_CODE, {segment} AS SEGMENT,
@@ -259,6 +263,7 @@ def _materialize(session, step2_table: str) -> None:
           AND COALESCE(mr.CONTENT_TYPE, '') NOT IN ({_sql_list(EXCLUDED_CONTENT_TYPES)})
           AND COALESCE(mr.COMMERCIAL_MODEL, '') NOT IN ({_sql_list(EXCLUDED_COMMERCIAL_MODELS)})
         GROUP BY 1, 2, 3, 4""").collect()
+    progress.advance(0.95, "Preparing the analysis")
     # TEMP tables are never auto-analyzed; without statistics the planner guesses badly on the joins below.
     session.sql("ANALYZE " + ", ".join(_WORK_TABLES)).collect()
 
@@ -401,8 +406,8 @@ def compute_analytics(session, step2_table: str, albums: list, progress=NULL_PRO
     ppd_for = ppd["lookup"]
     progress.note("PPD from table" if ppd["source"] == "table" else "No PPD table found, using standard rates")
 
-    progress.stage("an_coverage", "Finding the recordings in this catalog")
-    _materialize(session, step2_table)
+    progress.stage("an_coverage", "Collecting the catalog's recordings")
+    _materialize(session, step2_table, progress)
     coverage_row = (_query(session, """
         SELECT (SELECT COUNT(*) FROM wb_catalog_recs) AS CATALOG_RECORDINGS,
                (SELECT COUNT(DISTINCT MR_ID) FROM wb_rec_map) AS MAPPED_RECORDINGS,

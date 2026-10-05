@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -81,7 +82,6 @@ def _parameters(sql: str, params: list[Any] | tuple[Any, ...] | None) -> tuple[s
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?")
 _IDLE_PING_SECONDS = 45     # ping a connection that has sat idle this long before trusting it
 _schema_ready = False       # CREATE SCHEMA only needs to run once per process
-SESSION_CONNECTION_KEY = "_pg_conn"
 
 
 class PostgresResult:
@@ -154,6 +154,9 @@ class PostgresConnection:
             options=f'-c search_path="{self._schema}",public',
         )
         self._last_used = time.monotonic()
+        # Free-form per-connection state for things that live exactly as long as this connection's
+        # TEMP tables (e.g. the ISRC upload table and which file it holds).
+        self.state: dict[str, Any] = {}
         self._configure_application_schema()
 
     def _configure_application_schema(self) -> None:
@@ -164,6 +167,10 @@ class PostgresConnection:
         with self._connection.cursor() as cursor:
             cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{self._schema}"')
         _schema_ready = True
+
+    @property
+    def last_used(self) -> float:
+        return self._last_used
 
     def touch(self) -> None:
         self._last_used = time.monotonic()
@@ -194,22 +201,55 @@ class PostgresConnection:
         return self.session().sql(sql).collect()
 
 
-def get_connection() -> PostgresConnection:
-    """The current Streamlit session's database connection, reconnecting only when it has died.
+class _ConnectionRegistry:
+    """Process-wide connections, one per user, kept across Streamlit sessions.
 
-    One connection per browser session also keeps session-local objects (TEMP tables such as the
-    ISRC upload and the analytics working tables) alive between reruns.
+    Every step click in the workbench reloads the browser page, and a reload is a brand-new
+    Streamlit session with empty ``st.session_state``. A per-session connection would therefore be
+    reopened (seconds) and leaked on every click. Keeping the connection per user in the server
+    process means a click reuses it, and the TEMP tables on it (the ISRC upload and the analytics
+    working tables) are still there.
     """
+
+    MAX_IDLE_SECONDS = 20 * 60
+    MAX_CONNECTIONS = 40
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._connections: dict[str, PostgresConnection] = {}
+
+    def get(self, owner: str) -> "PostgresConnection":
+        key = (owner or "anonymous").strip().lower()
+        with self._lock:
+            self._evict_locked(keep=key)
+            conn = self._connections.get(key)
+            if conn is not None and conn.is_alive():
+                return conn
+            if conn is not None:
+                conn.close()
+            conn = PostgresConnection()
+            self._connections[key] = conn
+            return conn
+
+    def _evict_locked(self, keep: str) -> None:
+        now = time.monotonic()
+        for key, conn in list(self._connections.items()):
+            if key != keep and now - conn.last_used > self.MAX_IDLE_SECONDS:
+                conn.close()
+                del self._connections[key]
+        while len(self._connections) >= self.MAX_CONNECTIONS:
+            oldest = min((k for k in self._connections if k != keep), key=lambda k: self._connections[k].last_used, default=None)
+            if oldest is None:
+                break
+            self._connections.pop(oldest).close()
+
+
+def get_connection(owner: str) -> PostgresConnection:
+    """The user's long-lived database connection (reconnecting transparently if it has died)."""
     import streamlit as st
 
-    conn = st.session_state.get(SESSION_CONNECTION_KEY)
-    if conn is not None and conn.is_alive():
-        return conn
-    if conn is not None:
-        conn.close()
-    conn = PostgresConnection()
-    st.session_state[SESSION_CONNECTION_KEY] = conn
-    # TEMP tables belonged to the old connection and are gone with it.
-    for stale in ("_isrc_temp_table", "_isrc_hash"):
-        st.session_state.pop(stale, None)
-    return conn
+    @st.cache_resource
+    def registry() -> _ConnectionRegistry:
+        return _ConnectionRegistry()
+
+    return registry().get(owner)

@@ -2538,10 +2538,26 @@
     // Remove the CSS overlay directly (same-origin) and also post a message as backup.
     try {
       document.querySelectorAll('.wb-connection-error-overlay,[data-testid="stDialogOverlay"],.stDialogOverlay,[data-baseweb="modal"]').forEach(function(el) { el.remove(); });
-      var navLoader = window.parent.document.getElementById('wb-navigation-loader');
-      if (navLoader) navLoader.remove();
-      var navLoaderStyle = window.parent.document.getElementById('wb-navigation-loader-style');
-      if (navLoaderStyle) navLoaderStyle.remove();
+      // Dismiss the host loader layers (build card, plain overlay, step-loader shell). They stay up until
+      // now so the page never goes blank between loader and workbench; wait for the first paint, then
+      // fade them out (app.py has a CSS failsafe if this cannot run).
+      (function dismissHostLoaders() {
+        var hostDoc = window.parent.document;
+        function dismiss() {
+          try {
+            hostDoc.querySelectorAll('#wb-navigation-loader').forEach(function (el) { el.classList.add('wb-loader--out'); });
+            hostDoc.querySelectorAll('iframe').forEach(function (frame) {
+              try {
+                if (frame.contentWindow && frame.contentWindow.__SHELL_STEP__ !== undefined) {
+                  var box = frame.closest('[data-testid="stElementContainer"]');
+                  if (box) box.classList.add('wb-loader--out');
+                }
+              } catch (e) { /* not same-origin: not ours */ }
+            });
+          } catch (e) {}
+        }
+        requestAnimationFrame(function () { requestAnimationFrame(dismiss); });
+      })();
       window.parent.document.querySelectorAll('.wb-connection-error-overlay,[data-testid="stDialogOverlay"],.stDialogOverlay,[data-baseweb="modal"]').forEach(function(el) { el.remove(); });
       window.parent.postMessage({ type: 'wb_content_ready' }, '*');
     } catch(e) {}

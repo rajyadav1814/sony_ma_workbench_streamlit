@@ -24,10 +24,10 @@ from session_manager import (
     complete_session,
     abandon_open_sessions,
 )
-from data_loader import load_data_from_postgres, search_catalog, ensure_isrc_temp_table, compute_analytics_from_monthly_detail
+from data_loader import load_data_from_postgres, search_catalog, ensure_isrc_temp_table, compute_analytics_from_monthly_detail, invalidate_analytics
 from build_progress import NULL_PROGRESS, BuildProgress
 from catalog_builder import create_step1_selection_table, create_catalog_table, create_step2_table, _make_table_name, pull_monthly_detail
-from postgres_connection import get_connection, SESSION_CONNECTION_KEY
+from postgres_connection import get_connection
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -179,6 +179,31 @@ _app_styles = """<style>
         animation: wb-build-spin .8s linear infinite;
     }
     @keyframes wb-build-spin { to { transform: rotate(360deg); } }
+
+    /* Loader layers (build card, plain overlay, step-loader shell) are fixed over the page and stay until the
+       workbench reports it has painted (it adds .wb-loader--out), so there is no blank gap between them.
+       Failsafe: once the script run is finished (the .wb-run-done marker exists) any layer still showing
+       fades away on its own, so a blocked parent-page script can never leave the screen covered. */
+    .stElementContainer:has(> iframe[srcdoc*="wb-loader-shell-marker"]) {
+        position: fixed !important;
+        inset: 0 !important;
+        z-index: 999998;
+        height: 100vh;
+        background: #F1EFE7;
+    }
+    .stElementContainer:has(> iframe[srcdoc*="wb-loader-shell-marker"]) > iframe { height: 100vh !important; }
+    .wb-loader--out { animation: wb-loader-out .28s ease forwards !important; }
+    .stApp:has(.wb-run-done) :is(.wb-build-loader, .stElementContainer:has(> iframe[srcdoc*="wb-loader-shell-marker"])) {
+        animation: wb-loader-out .4s ease 8s forwards;
+    }
+    @keyframes wb-loader-out { to { opacity: 0; visibility: hidden; pointer-events: none; } }
+    .stElementContainer:has(.wb-run-done) { display: none !important; }
+
+    @media (prefers-reduced-motion: reduce) {
+        .wb-build-loader__spinner, .wb-progress__spin { animation-duration: 2.4s; }
+        .wb-progress__fill, .wb-progress__fill::after { animation: none; }
+        .wb-loader--out { animation-duration: .01s !important; }
+    }
     /* Translucent variant: the screen underneath stays visible, only the loader card is shown. */
     .wb-build-loader--over {
         background: rgba(241, 239, 231, 0.55);
@@ -203,12 +228,30 @@ _app_styles = """<style>
     .wb-progress__title { font-size: 1.25rem; font-weight: 700; margin-bottom: 6px; }
     .wb-progress__sub { font-size: .88rem; color: #6b665c; margin-bottom: 22px; }
     .wb-progress__bar { height: 14px; border-radius: 10px; background: #E5E1D8; overflow: hidden; }
+    /* Each progress update replaces the card's DOM, so a CSS transition would never run. build_progress
+       passes the previous percentage as --from and the bar animates from there to its new width. */
     .wb-progress__fill {
+        position: relative;
         height: 100%;
         border-radius: 10px;
         background: linear-gradient(90deg, #E1261C 0%, #ff6b5e 100%);
-        transition: width .35s ease;
+        animation: wb-fill .45s ease-out both;
+        overflow: hidden;
     }
+    @keyframes wb-fill { from { width: var(--from, 0%); } }
+    /* A moving sheen shows the build is alive even while one long query is running. */
+    .wb-progress__fill::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.38) 50%, transparent 70%);
+        background-size: 200% 100%;
+        animation: wb-sheen 1.6s linear infinite;
+    }
+    @keyframes wb-sheen { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+    .wb-progress__fill--failed { background: #b3261e; animation: none; }
+    .wb-progress__fill--failed::after { display: none; }
+    .wb-progress__step--failed { color: #b3261e; font-weight: 600; }
     .wb-progress__pct { margin-top: 12px; font-size: 1.15rem; font-weight: 700; color: #E1261C; }
     .wb-progress__meta { margin-top: 4px; font-size: .8rem; color: #8a8579; }
     .wb-progress__steps { list-style: none; margin: 22px 0 0; padding: 16px 0 0; border-top: 1px solid #ECE8DE; text-align: left; }
@@ -301,6 +344,7 @@ _transition_loader_requested = (
 )
 _transition_loader = st.empty()
 _loader_slot_used = False
+_loader_is_overlay = False   # True when the loader is a fixed layer that the workbench dismisses itself
 _build_progress = None
 
 
@@ -330,7 +374,7 @@ if _transition_loader_requested:
         # Catalog build: a live card whose percentage is driven by the real database work below.
         _build_progress = BuildProgress(_transition_loader)
         _build_progress.stage("prepare", "Starting")
-        _loader_slot_used = True
+        _loader_slot_used = _loader_is_overlay = True
     elif _step_navigation_requested or _home_loader:
         # Step changes keep the header and tabs on screen; only the content area shows the loader.
         if _home_loader and not (_catalog_build_requested or _step_navigation_requested):
@@ -344,7 +388,7 @@ if _transition_loader_requested:
                 _shell_done = []
         with _transition_loader.container():
             components.html(_step_loader_html(_loader_title, _shell_step, _shell_done), height=760, scrolling=False)
-        _loader_slot_used = True
+        _loader_slot_used = _loader_is_overlay = True
     elif st.session_state.get("_pending_login"):
         # Login → welcome back: keep the Welcome screen visible, loader card on top only.
         from steps.welcome import render_welcome_screen
@@ -361,10 +405,11 @@ if _transition_loader_requested:
         _loader_slot_used = True
     else:
         _transition_loader.markdown(_loader_overlay_html(_loader_title), unsafe_allow_html=True)
+        _loader_slot_used = _loader_is_overlay = True
 
 if _params.get("wb_logout") == "1":
     for key in list(st.session_state.keys()):
-        if key not in ("_session_tables_checked", SESSION_CONNECTION_KEY):
+        if key != "_session_tables_checked":
             del st.session_state[key]
     for key in list(st.query_params.keys()):
         if key.startswith("wb_"):
@@ -383,16 +428,19 @@ if not st.session_state.get("user_email") and "wb_email" not in _params:
     st.stop()
 
 # ─── PostgreSQL connection ──────────────────────────────────────────────────
-# One connection per browser session, reused across reruns (opening one costs seconds).
-conn = get_connection()
+# One long-lived connection per user, shared by every page load (each step click reloads the page into a
+# new Streamlit session; opening a connection costs seconds).
+if _build_progress:
+    _build_progress.note("Connecting to the database")   # the first connection of a user takes a few seconds
+conn = get_connection(st.session_state.get("user_email") or _params.get("wb_email", ""))
 session = conn.session()
 
-if "_session_tables_checked" not in st.session_state:
+if not conn.state.get("session_tables_ready"):
     try:
         ensure_session_tables(session)
+        conn.state["session_tables_ready"] = True
     except Exception:
         pass
-    st.session_state["_session_tables_checked"] = True
 
 _resume_action = st.session_state.pop("_pending_resume_action", None)
 if isinstance(_resume_action, dict):
@@ -450,7 +498,7 @@ if _params.get("wb_action") == "move_resume":
     from session_manager import get_open_sessions as _get_open_sessions
     open_sessions = _get_open_sessions(session, _email) if _email else []
     for key in list(st.session_state.keys()):
-        if key not in ("user_email", "_session_tables_checked", SESSION_CONNECTION_KEY):
+        if key not in ("user_email", "_session_tables_checked"):
             del st.session_state[key]
     if _home_loader:
         st.session_state["_home_loader"] = _home_loader
@@ -469,7 +517,7 @@ _do_reset = _params.get("wb_reset") == "1" or st.session_state.get("_reset_pendi
 if _do_reset:
     _email = st.session_state.get("user_email", "")
     for key in list(st.session_state.keys()):
-        if key not in ("user_email", "welcomed", "_session_tables_checked", SESSION_CONNECTION_KEY):
+        if key not in ("user_email", "welcomed", "_session_tables_checked"):
             del st.session_state[key]
     if _email:
         new_sess = create_new_session(session, _email)
@@ -642,8 +690,8 @@ with st.container():
     # mode and ISRC upload (or the stored answer has aged out). Empty answers count; failed queries do not.
     if wb_search_term and wb_search_term.strip():
         _live_search_key = wb_search_term.strip()
-        _memo_key = f"{wb_search_mode}|{st.session_state.get('_isrc_hash', '')}|{_live_search_key}"
-        _search_memo = st.session_state.setdefault("_search_memo", {})
+        _memo_key = f"{wb_search_mode}|{conn.state.get('isrc_hash', '')}|{_live_search_key}"
+        _search_memo = conn.state.setdefault("search_memo", {})
         _memo_hit = _search_memo.get(_memo_key)
         if not _memo_hit or time.time() - _memo_hit[0] > CACHE_TTL_SECONDS:
             try:
@@ -704,13 +752,14 @@ with st.container():
                     step1_result = create_step1_selection_table(
                         session, _search_term, user_email, _selected_entities or [_search_term],
                         search_mode=_search_mode, session_id=_sid, progress=_progress,
-                        isrc_table=st.session_state.get("_isrc_temp_table"),
+                        isrc_table=conn.state.get("isrc_table"),
                     )
                     if step1_result and step1_result["status"] == "success" and step1_result.get("row_count", 0) > 0:
                         step1_table = step1_result["table_name"]
                         st.session_state["_step1_table_name"] = step1_table
                         step2_table = create_step2_table(session, step1_table, _selected_entities, user_email, _search_term, session_id=_sid, progress=_progress)
                         st.session_state["_catalog_table_name"] = step2_table
+                        invalidate_analytics(step2_table)   # same table name is reused when a catalogue is rebuilt
                         catalog_created = True
                         st.query_params.update({"wb_step2_created": "1", "wb_step2_table": step2_table})
                     elif step1_result and step1_result.get("status") == "error":
@@ -824,12 +873,23 @@ html_parts = [
 html_full = "\n".join(html_parts)
 html_full = html_full.replace('src="sonymusic.png"', f'src="{_logo_data_uri()}"')
 
+_build_failed = bool(
+    st.session_state.get("_table_creation_error")
+    or st.session_state.get("_album_load_error")
+    or injected_data.get("analytics_error")
+)
 if _build_progress:
-    _build_progress.finish()
-if _loader_slot_used:
-    # Clear the loader screen (shell, welcome or resume backdrop) before showing the workbench.
+    # Leave the card up (showing "Done", or where it stopped) until the workbench takes over.
+    _build_progress.finish(failed=_build_failed)
+if _loader_slot_used and not _loader_is_overlay:
+    # Welcome / resume backdrops sit in the page flow, so they have to go before the workbench appears.
     _transition_loader.empty()
+# Fixed loader layers stay up until the workbench iframe paints and dismisses them itself
+# (workbench_scripts.html), so there is no blank gap. The marker below starts a CSS failsafe that
+# removes them a few seconds after this run ends, whatever happens in the browser.
 components.html(html_full, height=900, scrolling=True)
+if _loader_is_overlay:
+    st.html('<div class="wb-run-done"></div>')
 st.session_state.pop("_ui_transition", None)
 if _login_transition_requested:
     st.session_state.pop("_login_transition", None)
