@@ -668,8 +668,15 @@ def render_resume_screen(session, backdrop=False):
             step_data_resume.get("searchTerm", "") if isinstance(step_data_resume, dict) else ""
         ) or _fallback_term or "Catalogue"
         search_mode = step_data_resume.get("searchMode") if isinstance(step_data_resume, dict) else None
-        display_name = f"{artist_name} ({search_mode})" if search_mode in ("Artist", "Label") else artist_name
-        initials = "".join([w[0].upper() for w in artist_name.split()[:2]]) if artist_name else "CA"
+        is_isrc = search_mode in ("ISRC", "ISRC List") or artist_name.lower().startswith("isrc upload")
+        if is_isrc:
+            # "ISRC upload: file.xlsx" -> "file.xlsx (ISRC)"
+            file_name = artist_name.split(":", 1)[1].strip() if ":" in artist_name else artist_name
+            display_name = f"{file_name} (ISRC)" if file_name else "ISRC upload (ISRC)"
+            initials = "IS"
+        else:
+            display_name = f"{artist_name} ({search_mode})" if search_mode in ("Artist", "Label") else artist_name
+            initials = "".join([w[0].upper() for w in artist_name.split()[:2]]) if artist_name else "CA"
         is_returning = current_step > MIN_STEP or bool(step_data_resume)
         raw_updated = pending.get("updated_at", "")
         if raw_updated:
