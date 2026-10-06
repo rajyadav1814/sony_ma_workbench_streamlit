@@ -1540,15 +1540,13 @@
       ${kpiCard("ROW Revenue", fmtUSD(rr.row), null, true, fmtShare(rr.row, rr.total) + " of current revenue")}
       ${kpiCard("Current Annual Revenue", fmtUSD(rr.total), null, true, "last 12 months")}
     </div>
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
-      <div class="subtabs" style="margin-bottom:0;">
-        ${tabs.map((tb, i) => `<button class="subtab ${i === t ? "active" : ""}" onclick="setRevenueTab(${i})">${tb}</button>`).join("")}
-      </div>
-      ${filterHtml}
+    <div style="display:flex;justify-content:flex-end;margin:12px 0 4px;">${filterHtml}</div>
+    ${ryData.length ? table([hasFilter ? "Consumption Year" : "Release Year Bucket", "Consumption", "Revenue (USD)", "YoY Growth %"], rows) : ""}
+    <div class="subtabs" style="margin-bottom:4px;">
+      ${tabs.map((tb, i) => `<button class="subtab ${i === t ? "active" : ""}" onclick="setRevenueTab(${i})">${tb}</button>`).join("")}
     </div>
     ${chartTitle}
     ${chart}
-    ${ryData.length ? table([hasFilter ? "Consumption Year" : "Release Year Bucket", "Consumption", "Revenue (USD)", "YoY Growth %"], rows) : ""}
 
     ${ppdRows.length ? sectionTitle("PPD Splits", "Source: " + ppdSource + ".") + table(["Split Type", "Segment", "PPD (USD)"], ppdRows) : ""}
     ${navButtons(false)}
