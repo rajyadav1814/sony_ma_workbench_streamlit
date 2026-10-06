@@ -1,6 +1,9 @@
 """Welcome and Resume screens rendered in Streamlit (before the HTML workbench)."""
 
+import base64
 import json
+from pathlib import Path
+
 import streamlit as st
 from config import MAX_STEP, MIN_STEP, STEP_LABELS
 from theme import LIGHT_CSS, THEME_CSS, render_theme_toggle
@@ -33,82 +36,146 @@ def render_welcome_screen(session, backdrop=False):
     welcome_styles = """
         <style>
             """ + LIGHT_CSS + """
-            [data-testid="stVerticalBlock"] {gap: 1rem !important;}
             [data-testid="stAppViewContainer"] {
-                background: var(--wb-bg) !important;
-                padding-top: 75px;
+                background:
+                    radial-gradient(900px 520px at 88% -8%, rgba(225,38,28,0.09), transparent 62%),
+                    radial-gradient(800px 500px at -4% 108%, rgba(20,18,16,0.07), transparent 62%),
+                    var(--wb-bg) !important;
             }
             div.block-container {
-                padding: 40px 20px !important;
+                padding: 9vh 20px 40px !important;
                 max-width: 100% !important;
             }
-            .welcome-card {
-                background: var(--wb-surface);
-                border-radius: 16px;
-                padding: 48px 40px;
-                box-shadow: 0 4px 24px var(--wb-shadow);
-                max-width: 640px;
-                margin: 0 auto;
-            }
-            .welcome-card h1 {
-                font-size: 28px;
-                font-weight: 800;
-                margin-bottom: 16px;
-                color: #16a34a;
-            }
-            .welcome-card p {
-                line-height: 1.6;
-                margin-bottom: 8px;
-                color: var(--wb-text);
-            }
-            .welcome-card .subtitle {
-                opacity: 0.65;
-                color: var(--wb-text-dim);
-            }
-            /* Keep the native form, input, submit button, and messages aligned
-               to the welcome card rather than stretching across the page. */
-            [data-testid="stForm"],
-            [data-testid="stTextInput"],
-            [data-testid="stButton"],
-            [data-testid="stFormSubmitButton"],
-            [data-testid="stAlert"] {
-                max-width: 640px;
-                width: 100%;
-                margin-left: auto;
-                margin-right: auto;
-            }
-            [data-testid="stForm"] {
-                border: 0 !important;
+
+            /* One wide card, split in two: a dark brand panel on the left, the sign-in form on the right. */
+            CARD {
+                position: relative;
+                width: 100% !important;
+                max-width: 1020px !important;
+                margin: 0 auto !important;
                 padding: 0 !important;
+                gap: 0 !important;
+                background: var(--wb-surface) !important;
+                border-radius: 24px !important;
+                box-shadow: 0 2px 4px rgba(20,18,16,0.06), 0 40px 80px -24px rgba(20,18,16,0.35);
+                overflow: hidden !important;
             }
-            /* Fix input text colors on white background */
-            [data-testid="stTextInput"] label {
-                color: var(--wb-text) !important;
-                font-size: 14px !important;
-                font-weight: 600 !important;
+            [data-testid="stHorizontalBlock"]:has(.wl-hero) {
+                gap: 0 !important;
+                align-items: stretch !important;
+            }
+
+            /* Left: brand panel */
+            COL_HERO {
+                position: relative;
+                min-width: 300px;
+                padding: 48px 46px 44px !important;
+                color: #F4F1EA;
+                background:
+                    radial-gradient(560px 380px at 105% -5%, rgba(225,38,28,0.75), transparent 62%),
+                    radial-gradient(420px 300px at -10% 110%, rgba(225,38,28,0.28), transparent 62%),
+                    #0B0B0B;
+                overflow: hidden;
+            }
+            COL_HERO [data-testid="stVerticalBlock"] { gap: 0 !important; height: 100%; position: relative; z-index: 1; }
+            /* Halftone dot sphere (the Sony Music Latin logo motif) glowing behind the text */
+            COL_HERO::after {
+                content: "";
+                position: absolute;
+                width: 400px; height: 400px;
+                right: -120px; top: -70px;
+                border-radius: 50%;
+                background: radial-gradient(circle, #FF3B30 1.7px, transparent 2.2px) 0 0 / 13px 13px;
+                -webkit-mask-image: radial-gradient(circle at 42% 58%, #000 0%, rgba(0,0,0,0.5) 40%, transparent 68%);
+                mask-image: radial-gradient(circle at 42% 58%, #000 0%, rgba(0,0,0,0.5) 40%, transparent 68%);
+                filter: drop-shadow(0 0 14px rgba(255,59,48,0.55));
+                pointer-events: none;
+                z-index: 0;
+            }
+            .wl-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 44px; }
+            .wl-brand img { height: 42px; width: 42px; object-fit: contain; }
+            .wl-brand-text { display: flex; flex-direction: column; line-height: 1.25; }
+            .wl-brand-name { font-size: 12px; font-weight: 700; letter-spacing: 3px; color: #FFFFFF; }
+            .wl-brand-sub  { font-size: 10px; font-weight: 600; letter-spacing: 3px; color: rgba(255,255,255,0.55); }
+            .wl-eyebrow {
+                display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase;
+                color: #FF8C85; background: rgba(225,38,28,0.16); border: 1px solid rgba(255,140,133,0.3);
+                padding: 5px 11px; border-radius: 20px; margin-bottom: 18px;
+            }
+            .wl-title {
+                font-size: 48px; font-weight: 800; line-height: 1.04; letter-spacing: -1px;
+                color: #FFFFFF; margin: 0 0 14px;
+            }
+            .wl-title span { color: #FF5A4F; }
+            .wl-lede { font-size: 15px; line-height: 1.65; color: rgba(244,241,234,0.72); margin: 0 0 30px; max-width: 340px; }
+            .wl-points { list-style: none !important; margin: 0 0 34px !important; padding: 0 !important; }
+            .wl-points li {
+                display: flex; align-items: center; gap: 14px; margin: 0 !important; padding: 7px 0 !important;
+                font-size: 15px; font-weight: 500; color: #F4F1EA;
+            }
+            .wl-points .n {
+                flex: 0 0 30px; height: 30px; border-radius: 9px;
+                display: inline-flex; align-items: center; justify-content: center;
+                font-size: 13px; font-weight: 700; color: #FFFFFF;
+                background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.16);
+            }
+            /* Equaliser motif */
+            .wl-eq { display: flex; align-items: flex-end; justify-content: space-between; gap: 5px; height: 54px; opacity: 0.95; }
+            .wl-eq i { display: block; flex: 1 1 0; max-width: 7px; border-radius: 3px; background: linear-gradient(180deg, #FF5A4F, #E1261C); animation: wl-eq 1.6s ease-in-out infinite; }
+            .wl-eq i:nth-child(4n) { background: linear-gradient(180deg, #FFFFFF, #9A9A9A); }
+            @keyframes wl-eq { 0%,100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+            .wl-eq i { transform-origin: bottom; }
+            .wl-eq i:nth-child(12n+1){height:60%;animation-delay:-.1s} .wl-eq i:nth-child(12n+2){height:90%;animation-delay:-.5s}
+            .wl-eq i:nth-child(12n+3){height:45%;animation-delay:-.9s} .wl-eq i:nth-child(12n+4){height:100%;animation-delay:-.3s}
+            .wl-eq i:nth-child(12n+5){height:70%;animation-delay:-1.2s} .wl-eq i:nth-child(12n+6){height:50%;animation-delay:-.7s}
+            .wl-eq i:nth-child(12n+7){height:85%;animation-delay:-1.4s} .wl-eq i:nth-child(12n+8){height:40%;animation-delay:-.2s}
+            .wl-eq i:nth-child(12n+9){height:75%;animation-delay:-1s} .wl-eq i:nth-child(12n+10){height:55%;animation-delay:-.6s}
+            .wl-eq i:nth-child(12n+11){height:95%;animation-delay:-1.3s} .wl-eq i:nth-child(12n+12){height:45%;animation-delay:-.4s}
+
+            /* Right: sign-in */
+            COL_FORM { padding: 112px 52px 56px !important; }
+            COL_FORM [data-testid="stVerticalBlock"] { gap: 0 !important; height: 100%; justify-content: center; }
+            .wl-form-title { font-size: 26px; font-weight: 800; letter-spacing: -0.4px; color: var(--wb-text); margin: 0 0 6px; }
+            .wl-form-sub { font-size: 14.5px; color: var(--wb-text-mute); margin: 0 0 28px; }
+
+            /* Form: sits inside the card, full width. */
+            [data-testid="stForm"] { border: 0 !important; padding: 0 !important; width: 100% !important; }
+            [data-testid="stTextInput"] { width: 100% !important; }
+            [data-testid="stTextInput"] label p {
+                color: var(--wb-text) !important; font-size: 13px !important; font-weight: 600 !important;
+            }
+            /* The root element carries the field's border so the input never double-draws it. */
+            [data-testid="stTextInputRootElement"] {
+                border: 1px solid var(--wb-input-border) !important;
+                border-radius: 10px !important;
+                background: var(--wb-input-bg) !important;
+                box-shadow: none !important;
+                overflow: hidden;
+                transition: border-color .15s, box-shadow .15s;
+            }
+            [data-testid="stTextInputRootElement"]:focus-within {
+                border-color: #E1261C !important;
+                box-shadow: 0 0 0 4px rgba(225,38,28,0.14) !important;
             }
             [data-testid="stTextInput"] input {
                 display: block !important;
                 box-sizing: border-box !important;
                 width: 100% !important;
-                min-height: 44px !important;
+                height: 48px !important;
+                min-height: 48px !important;
                 appearance: none !important;
                 color-scheme: var(--wb-scheme) !important;
                 color: var(--wb-text) !important;
                 background: var(--wb-input-bg) !important;
-                border: 1px solid var(--wb-input-border) !important;
-                border-radius: 6px !important;
-                padding: 10px 12px !important;
+                border: 0 !important;
+                border-radius: 0 !important;
+                padding: 10px 14px !important;
                 font: 400 16px/1.4 Inter, Arial, sans-serif !important;
-                height: 44px !important;
                 outline: none !important;
-                box-shadow: inset 0 1px 2px rgba(0,0,0,0.06) !important;
+                box-shadow: none !important;
+                transition: border-color .15s, box-shadow .15s;
             }
-            [data-testid="stTextInput"] input:autofill {
-                -webkit-text-fill-color: var(--wb-text) !important;
-                -webkit-box-shadow: 0 0 0 1000px var(--wb-input-bg) inset !important;
-                box-shadow: 0 0 0 1000px var(--wb-input-bg) inset !important;
-            }
+            [data-testid="stTextInput"] input:autofill,
             [data-testid="stTextInput"] input:-webkit-autofill,
             [data-testid="stTextInput"] input:-webkit-autofill:hover,
             [data-testid="stTextInput"] input:-webkit-autofill:focus,
@@ -117,51 +184,40 @@ def render_welcome_screen(session, backdrop=False):
                 -webkit-box-shadow: 0 0 0 1000px var(--wb-input-bg) inset !important;
                 box-shadow: 0 0 0 1000px var(--wb-input-bg) inset !important;
             }
-            [data-testid="stTextInput"] input:focus {
-                border-color: #3b5de7 !important;
-                box-shadow: 0 0 0 3px rgba(59,93,231,0.14) !important;
-            }
-            [data-testid="stTextInput"] input::placeholder {
-                color: #9ca3af !important;
-                font-size: 16px !important;
-            }
-            /* Button styling for welcome screen */
-            button[data-testid="stBaseButton-primary"] {
-                background-color: #3b5de7 !important;
-                color: #ffffff !important;
-                border-color: #3b5de7 !important;
-            }
-            button[data-testid="stBaseButton-primary"]:hover {
-                background-color: #2d4ad0 !important;
-                border-color: #2d4ad0 !important;
-            }
-            /* Form submit controls do not use stButton; size this one directly. */
-            [data-testid="stFormSubmitButton"] {
-                width: min(640px, 100%) !important;
-                margin: 0 auto !important;
-            }
-            [data-testid="stFormSubmitButton"] > button,
+            [data-testid="stTextInput"] input::placeholder { color: #9ca3af !important; font-size: 16px !important; }
+
+            [data-testid="stFormSubmitButton"] { width: 100% !important; margin-top: 18px !important; }
             [data-testid="stFormSubmitButton"] button {
                 width: 100% !important;
-                min-height: 44px !important;
+                min-height: 48px !important;
+                border-radius: 10px !important;
                 font-size: 15px !important;
                 font-weight: 700 !important;
-                background: #3B5DE7 !important;
-                border-color: #3B5DE7 !important;
+                letter-spacing: 0.2px;
+                background: #E1261C !important;
+                border-color: #E1261C !important;
                 color: #FFFFFF !important;
+                box-shadow: 0 8px 18px -8px rgba(225,38,28,0.7);
+                transition: background .15s, transform .15s;
             }
-            [data-testid="stFormSubmitButton"] > button:hover,
             [data-testid="stFormSubmitButton"] button:hover {
-                background: #2D4AD0 !important;
-                border-color: #2D4AD0 !important;
+                background: #C51616 !important;
+                border-color: #C51616 !important;
+                transform: translateY(-1px);
             }
+
             /* Validation messages use a distinct, readable error treatment. */
             [data-testid="stAlert"] {
+                width: 100% !important;
+                margin-top: 14px !important;
                 background: var(--wb-alert-bg) !important;
                 border: 1px solid var(--wb-alert-border) !important;
                 border-radius: 10px !important;
                 color: var(--wb-alert-text) !important;
-                padding: 14px 16px !important;
+                padding: 12px 14px !important;
+            }
+            [data-testid="stAlert"] [data-testid="stAlertContainer"] {
+                background: transparent !important; padding: 0 !important;
             }
             [data-testid="stAlert"] *,
             [data-testid="stAlert"] p,
@@ -169,54 +225,100 @@ def render_welcome_screen(session, backdrop=False):
                 color: var(--wb-alert-text) !important;
                 opacity: 1 !important;
             }
+            @media (max-width: 760px) {
+                COL_HERO { padding: 32px 26px 28px !important; min-width: 0; }
+                COL_FORM { padding: 32px 26px 34px !important; }
+                .wl-title { font-size: 36px; }
+                .wl-brand { margin-bottom: 26px; }
+                COL_HERO::after { display: none; }
+                .wl-eq { display: none; }
+            }
         </style>
         """
+    # Style the card by the block that directly holds the marker, so it does not depend on
+    # the version-specific test ids of bordered containers.
+    _card = [
+        '[data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .wl-marker)',
+        '[data-testid="stVerticalBlock"]:has(> [data-testid="element-container"] .wl-marker)',
+    ]
+    welcome_styles = welcome_styles.replace("CARD", ",".join(_card))
+    _hero = ['[data-testid="stColumn"]:has(.wl-hero)', '[data-testid="column"]:has(.wl-hero)']
+    welcome_styles = welcome_styles.replace("COL_HERO::after", ",".join(h + "::after" for h in _hero))
+    welcome_styles = welcome_styles.replace(
+        "COL_HERO", '[data-testid="stColumn"]:has(.wl-hero),[data-testid="column"]:has(.wl-hero)'
+    ).replace(
+        "COL_FORM", '[data-testid="stColumn"]:has(.wl-formcol),[data-testid="column"]:has(.wl-formcol)'
+    )
+    if backdrop:
+        # While the loader is up, Streamlit keeps the previous run's card on screen (marked stale)
+        # until the run ends, which shows a second card under this backdrop copy. Hide it.
+        welcome_styles = welcome_styles.replace(
+            "</style>",
+            ",".join(
+                f'[data-testid="stVerticalBlock"]:has(> [data-testid="{c}"][data-stale="true"] .wl-marker)'
+                for c in ("stElementContainer", "element-container")
+            ) + " { display: none !important; }</style>",
+        )
     if hasattr(st, "html") and not backdrop:
         st.html(welcome_styles)
     else:
         st.markdown(welcome_styles, unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns([1, 4, 1])
-    with col2:
-        st.markdown(
-            """
-            <div class="welcome-card">
-                <h1>Welcome!</h1>
-                <p>
-                    To the <strong style="color: #dc2626;">Sony Music M&A Catalogue Valuation Platform</strong>.
-                </p>
-                <p class="subtitle">
-                    Use this tool to explore catalogue data, run valuation scenarios,
-                    and analyse growth trends across the portfolio.
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    logo_b64 = _logo_b64()
+    logo_img = f'<img src="data:image/png;base64,{logo_b64}" alt="Sony Music"/>' if logo_b64 else ""
+    with st.container():
+        st.markdown('<span class="wl-marker" style="display:none"></span>', unsafe_allow_html=True)
+        hero_col, form_col = st.columns([1.15, 1], gap="small")
 
-        st.markdown("<div style='padding-top: 30px;'></div>", unsafe_allow_html=True)
-
-        with st.form("welcome_login_form", border=False):
-            st.text_input(
-                "Email",
-                placeholder="you@sonymusic.com",
-                key="welcome_email",
+        with hero_col:
+            st.markdown(
+                '<span class="wl-hero" style="display:none"></span>'
+                f'<div class="wl-brand">{logo_img}<div class="wl-brand-text">'
+                '<span class="wl-brand-name">SONY MUSIC</span><span class="wl-brand-sub">LATIN</span></div></div>'
+                '<div><span class="wl-eyebrow">M&amp;A Catalogue Valuation Platform</span></div>'
+                '<div class="wl-title">Welcome<span>.</span></div>'
+                '<p class="wl-lede">Explore catalogue data, run valuation scenarios and analyse growth trends across the portfolio.</p>'
+                '<ul class="wl-points">'
+                '<li><span class="n">1</span>Explore catalogue data</li>'
+                '<li><span class="n">2</span>Run valuation scenarios</li>'
+                '<li><span class="n">3</span>Analyse growth trends</li>'
+                '</ul>'
+                '<div class="wl-eq">' + "<i></i>" * 36 + '</div>',
+                unsafe_allow_html=True,
             )
 
-            st.markdown("<div style=\"padding-top: 30px;\"></div>", unsafe_allow_html=True)
-            submitted = st.form_submit_button(
-                "Get Started",
-                type="primary",
-                use_container_width=True,
-                on_click=_handle_login_submit,
+        with form_col:
+            st.markdown(
+                '<span class="wl-formcol" style="display:none"></span>'
+                '<div class="wl-form-title">Get started</div>'
+                '<div class="wl-form-sub">Enter your work email to continue.</div>',
+                unsafe_allow_html=True,
             )
+            with st.form("welcome_login_form", border=False):
+                st.text_input(
+                    "Email",
+                    placeholder="you@sonymusic.com",
+                    key="welcome_email",
+                )
+                st.form_submit_button(
+                    "Get Started",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=_handle_login_submit,
+                )
 
-        welcome_error = st.session_state.get("_welcome_error")
-        if welcome_error:
-            if "valid email" in welcome_error:
-                st.error(welcome_error)
-            else:
-                st.warning(welcome_error)
+            welcome_error = st.session_state.get("_welcome_error")
+            if welcome_error:
+                if "valid email" in welcome_error:
+                    st.error(welcome_error)
+                else:
+                    st.warning(welcome_error)
+
+
+def _logo_b64():
+    """Sony Music logo as base64 for inline display ('' if the file is missing)."""
+    path = Path(__file__).parent.parent / "sonymusic.png"
+    return base64.b64encode(path.read_bytes()).decode() if path.exists() else ""
 
 
 def render_resume_screen(session, backdrop=False):
