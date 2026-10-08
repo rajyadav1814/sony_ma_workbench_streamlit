@@ -194,6 +194,21 @@ def complete_session(session, session_id: str) -> bool:
         return False
 
 
+def delete_session(session, session_id: str) -> bool:
+    """Remove a session's row from SESSION_PROGRESS (used by the resume screen's Remove)."""
+    if not session_id or session_id == "local":
+        return False
+    try:
+        session.sql(
+            f"DELETE FROM {DB}.SESSION_PROGRESS WHERE SESSION_ID = :1",
+            params=[session_id],
+        ).collect()
+        return True
+    except Exception as e:
+        st.warning(f"Remove session failed: {e}")
+        return False
+
+
 def abandon_open_sessions(session, email: str) -> None:
     """Mark all prior IN_PROGRESS sessions as COMPLETED."""
     try:

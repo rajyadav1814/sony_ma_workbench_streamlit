@@ -22,6 +22,7 @@ from session_manager import (
     create_new_session,
     save_checkpoint,
     complete_session,
+    delete_session,
     abandon_open_sessions,
 )
 from data_loader import load_data_from_postgres, search_catalog, ensure_isrc_temp_table, compute_analytics_from_monthly_detail, invalidate_analytics
@@ -496,7 +497,7 @@ if isinstance(_resume_action, dict):
             st.query_params.pop(_param, None)
     elif _action == "remove":
         _removed_session_id = _resume_action.get("session_id", "")
-        complete_session(session, _removed_session_id)
+        delete_session(session, _removed_session_id)
         # The catalogue is gone, so its STEP1/STEP2 tables (and cached analysis) go with it.
         try:
             for _dropped in drop_session_tables(session, _removed_session_id):
