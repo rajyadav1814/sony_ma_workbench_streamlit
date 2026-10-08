@@ -28,6 +28,22 @@ streamlit run app.py
 The local `.env` file must define `DATABASE_URL`, `APP_SCHEMA`, and the
 `extract_s` source schema settings.
 
+## Sign-in
+
+`APP_AUTH_MODE` (in `.env`) chooses how users prove who they are. See `.env.example`.
+
+- **`oidc`** (default): your OpenID Connect provider (Azure AD / Okta / Google) through
+  `st.login()`. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and fill it in.
+- **`otp`**: a 6-digit code emailed to the user. Set `APP_AUTH_SECRET` and the `SMTP_*` settings.
+  Optionally restrict access with `APP_ALLOWED_EMAILS` and/or `APP_ALLOWED_DOMAINS`; left empty, any email
+  address that can receive the code may sign in. Codes
+  expire after 10 minutes, allow 5 guesses and are stored hashed in `AUTH_OTP`. After sign-in a signed
+  token is kept in a browser cookie for `APP_SESSION_HOURS` (default 720, i.e. 30 days), so the code is only asked for on a new device or after that.
+- **`dev`**: the old "type any email" form, for local development only.
+  **Never set this in a deployed environment.**
+
+In `oidc` and `otp` the user's email comes from the verified identity, never from the URL or a typed value.
+
 ## Notes
 
 - All figures are illustrative dummy data, generated for UI review only.

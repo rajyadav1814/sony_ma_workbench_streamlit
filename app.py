@@ -19,6 +19,7 @@ from session_manager import (
     ensure_session_tables,
     get_open_session,
     get_open_sessions,
+    owns_session,
     create_new_session,
     save_checkpoint,
     complete_session,
@@ -29,6 +30,8 @@ from data_loader import load_data_from_postgres, search_catalog, ensure_isrc_tem
 from build_progress import NULL_PROGRESS, BuildProgress
 from catalog_builder import create_step1_selection_table, create_catalog_table, create_step2_table, drop_session_tables, _make_table_name, pull_monthly_detail
 from postgres_connection import get_connection
+from analytics import _TABLE_NAME
+import auth
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -337,6 +340,42 @@ def _step_loader_html(title: str, step: int, completed_steps: list) -> str:
 
 
 _params = st.query_params
+
+# ─── Sign-in ─────────────────────────────────────────────────────────────────
+# The user's identity is the verified email from the OIDC provider (st.user), never a wb_email URL
+# parameter or a typed value. APP_AUTH_MODE=dev turns this off for local development.
+_identity_new = False
+if auth.is_otp() and st.session_state.pop("_otp_clear_cookie", False):
+    auth.clear_session_cookie()
+    st.stop()
+if not auth.is_dev():
+    _signed_in_email = auth.verified_email()
+    if not _signed_in_email:
+        if st.session_state.get("user_email"):
+            # Signed out or the sign-in expired: forget the previous user. (Otherwise the sign-in
+            # form's own state, e.g. the email a code was sent to, has to survive reruns.)
+            for _key in list(st.session_state.keys()):
+                if _key != "_session_tables_checked":
+                    del st.session_state[_key]
+        from steps.welcome import render_welcome_screen
+        render_welcome_screen(None)
+        st.stop()
+    if st.session_state.get("user_email") != _signed_in_email:
+        # A new Streamlit session (every page reload is one) or a different person: start clean.
+        for _key in list(st.session_state.keys()):
+            if _key != "_session_tables_checked":
+                del st.session_state[_key]
+        st.session_state["user_email"] = _signed_in_email
+        _identity_new = True
+        if _params.get("wb_view") == "resume" or _params.get("wb_logout") == "1":
+            pass    # resume: restored below; logout: handled below
+        elif "wb_session_id" in _params or "wb_step" in _params:
+            st.session_state["welcomed"] = True   # refresh or step click inside the workbench
+        else:
+            # First load after signing in: same as submitting the old welcome form.
+            st.session_state["_pending_login"] = True
+            st.session_state["_login_transition"] = True
+
 # Home button: the workbench passes the current step so the header/tabs can be redrawn while reloading.
 # The move_resume handler below reruns the script, so the step is also kept in session state for that rerun.
 _home_loader = st.session_state.pop("_home_loader", None)
@@ -440,6 +479,12 @@ if _params.get("wb_logout") == "1":
         if key.startswith("wb_"):
             del st.query_params[key]
     _transition_loader.empty()
+    if auth.is_oidc():
+        st.logout()   # drops the identity cookie and sends the user back to the sign-in screen
+        st.stop()
+    if auth.is_otp():
+        auth.clear_session_cookie()   # removes the token cookie, then reloads to the sign-in screen
+        st.stop()
     from steps.welcome import render_welcome_screen
     render_welcome_screen(None)
     st.stop()
@@ -563,11 +608,15 @@ if _do_reset:
             del st.query_params[k]
     st.rerun()
 
-if "wb_email" in _params and not st.session_state.get("user_email"):
-    st.session_state["user_email"] = _params["wb_email"]
-    if _params.get("wb_view") == "resume" and is_valid_email(_params["wb_email"]):
+if (_identity_new and _params.get("wb_view") == "resume") or (
+    auth.is_dev() and "wb_email" in _params and not st.session_state.get("user_email")
+):
+    if auth.is_dev():
+        st.session_state["user_email"] = _params["wb_email"]
+    _restore_email = st.session_state["user_email"]
+    if _params.get("wb_view") == "resume" and is_valid_email(_restore_email):
         # Browser refresh on the "Welcome back" screen: show it again instead of logging out.
-        _restored = get_open_sessions(session, _params["wb_email"])
+        _restored = get_open_sessions(session, _restore_email)
         if _restored:
             st.session_state["_pending_resume_list"] = _restored
             st.session_state["_pending_resume"] = _restored[0]
@@ -575,7 +624,9 @@ if "wb_email" in _params and not st.session_state.get("user_email"):
     else:
         st.session_state["welcomed"] = True
 if "wb_session_id" in _params and "session_id" not in st.session_state:
-    st.session_state["session_id"] = _params["wb_session_id"]
+    # The id comes from the URL, so it is only used when it is one of this user's own sessions.
+    if owns_session(session, _params["wb_session_id"], st.session_state.get("user_email", "")):
+        st.session_state["session_id"] = _params["wb_session_id"]
 if "wb_step" in _params:
     st.session_state["current_step"] = clamp_step(_int_param(_params["wb_step"], MIN_STEP))
 
@@ -813,13 +864,21 @@ with st.container():
                     st.session_state["_table_creation_error"] = str(e)
     elif params.get("wb_step2_created") == "1":
         catalog_created = True
-        if not st.session_state.get("_catalog_table_name"):
-            st.session_state["_catalog_table_name"] = params.get("wb_step2_table", "")
 
-    step2_table_name = st.session_state.get("_catalog_table_name", "") or params.get("wb_step2_table", "")
-    if not step2_table_name and _requested_step >= 3 and _sid and _search_term != "catalog":
+    # The table name is never taken from the URL (it is interpolated into SQL below). It is either the
+    # one this session built, or re-derived from the user, search term and session id, which is how
+    # create_step2_table names it.
+    step2_table_name = st.session_state.get("_catalog_table_name", "")
+    if (
+        not step2_table_name
+        and (_requested_step >= 3 or params.get("wb_step2_created") == "1")
+        and _sid and _search_term != "catalog"
+    ):
         step2_table_name = f"{DB}.{_make_table_name(2, user_email, _search_term, _sid)}"
         st.session_state["_catalog_table_name"] = step2_table_name
+    if step2_table_name and not _TABLE_NAME.fullmatch(step2_table_name):
+        step2_table_name = ""
+        st.session_state.pop("_catalog_table_name", None)
     if step2_table_name and (params.get("wb_step2_created") == "1" or catalog_created or st.session_state.get("_catalog_table_name")):
         _progress.stage("albums", "Reading the catalog albums")
         try:

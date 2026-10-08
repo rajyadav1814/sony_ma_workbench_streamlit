@@ -397,7 +397,7 @@ def compute_analytics(session, step2_table: str, albums: list, progress=NULL_PRO
     """Compute everything steps 4-8 render, from the database. See module docstring.
 
     ``progress`` (see build_progress) is told which query is running, for the live progress card."""
-    if not _TABLE_NAME.match(step2_table or ""):
+    if not _TABLE_NAME.fullmatch(step2_table or ""):
         raise ValueError(f"Invalid catalog table name: {step2_table!r}")
 
     progress.stage("an_ppd", "Reading PPD rates and assumptions")

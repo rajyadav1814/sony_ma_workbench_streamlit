@@ -1,4 +1,5 @@
-streamlit>=1.32
+streamlit>=1.42
+Authlib>=1.3.2
 psycopg[binary]>=3.2
 python-dotenv>=1.0
 openpyxl>=3.1

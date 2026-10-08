@@ -2,6 +2,8 @@ name: sf_env
 channels:
   - conda-forge
 dependencies:
-  - streamlit
+  - streamlit>=1.42
+  - authlib>=1.3.2
+  - python-dotenv
   - psycopg
   - openpyxl

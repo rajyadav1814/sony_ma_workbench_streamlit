@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import streamlit as st
+import auth
 from config import MAX_STEP, MIN_STEP, STEP_LABELS
 from theme import LIGHT_CSS, THEME_CSS, render_theme_toggle
 from session_manager import (
@@ -207,6 +208,36 @@ def render_welcome_screen(session, backdrop=False):
                 transform: translateY(-1px);
             }
 
+            /* Plain text and the secondary buttons in the sign-in column. Streamlit paints these for the
+               browser's own light/dark setting, which left them white-on-white on a dark-mode browser. */
+            .wl-code-note { font-size: 14.5px; line-height: 1.5; color: var(--wb-text) !important; margin: 0 0 14px; }
+            .wl-code-note strong { color: var(--wb-text) !important; font-weight: 700; word-break: break-all; }
+            [data-testid="stColumn"]:has(.wl-formcol) [data-testid="stButton"] button,
+            [data-testid="column"]:has(.wl-formcol) [data-testid="stButton"] button {
+                background: var(--wb-surface) !important;
+                border: 1px solid var(--wb-input-border) !important;
+                color: var(--wb-text) !important;
+                border-radius: 10px !important;
+                min-height: 42px !important;
+                box-shadow: none !important;
+                transition: border-color .15s, color .15s;
+            }
+            [data-testid="stColumn"]:has(.wl-formcol) [data-testid="stButton"] button *,
+            [data-testid="column"]:has(.wl-formcol) [data-testid="stButton"] button * {
+                color: inherit !important; font-size: 13.5px !important; font-weight: 600 !important;
+            }
+            [data-testid="stColumn"]:has(.wl-formcol) [data-testid="stButton"] button:hover,
+            [data-testid="column"]:has(.wl-formcol) [data-testid="stButton"] button:hover {
+                border-color: #E1261C !important; color: #E1261C !important;
+            }
+
+            /* Spinner shown in the form area while a code is sent or checked. */
+            .wl-loading { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 36px 0;
+                          font-size: 14.5px; font-weight: 600; color: var(--wb-text); }
+            .wl-spin { width: 34px; height: 34px; border: 4px solid #E5E1D8; border-top-color: #E1261C;
+                       border-radius: 50%; animation: wl-spin .8s linear infinite; }
+            @keyframes wl-spin { to { transform: rotate(360deg); } }
+
             /* Validation messages use a distinct, readable error treatment. */
             [data-testid="stAlert"] {
                 width: 100% !important;
@@ -292,20 +323,48 @@ def render_welcome_screen(session, backdrop=False):
             st.markdown(
                 '<span class="wl-formcol" style="display:none"></span>'
                 '<div class="wl-form-title">Get started</div>'
-                '<div class="wl-form-sub">Enter your work email to continue.</div>',
+                '<div class="wl-form-sub">'
+                + {
+                    "dev": "Enter your work email to continue.",
+                    "otp": "Enter your work email and we'll send you a sign-in code.",
+                }.get(auth.mode(), "Sign in with your company account to continue.")
+                + '</div>',
                 unsafe_allow_html=True,
             )
-            with st.form("welcome_login_form", border=False):
-                st.text_input(
-                    "Email",
-                    placeholder="you@sonymusic.com",
-                    key="welcome_email",
+            if auth.is_dev():
+                with st.form("welcome_login_form", border=False):
+                    st.text_input(
+                        "Email",
+                        placeholder="you@sonymusic.com",
+                        key="welcome_email",
+                    )
+                    st.form_submit_button(
+                        "Get Started",
+                        type="primary",
+                        use_container_width=True,
+                        on_click=_handle_login_submit,
+                    )
+            elif auth.verified_email():
+                # Already signed in: this is the welcome screen kept behind the "Signing in..." loader.
+                st.caption("Signing you in…")
+            elif auth.is_otp():
+                _render_otp_form()
+            elif auth.is_signed_in():
+                # Signed in with the provider, but it gave no verified email address to key the user's data on.
+                st.error("Your account did not provide a verified email address, so you can't be signed in.")
+                st.button("Sign out", key=f"signout_btn{'_bd' if backdrop else ''}", on_click=st.logout)
+            elif not auth.oidc_configured():
+                st.error(
+                    "Sign-in is not configured. Add an [auth] section to .streamlit/secrets.toml "
+                    "(see .streamlit/secrets.toml.example)."
                 )
-                st.form_submit_button(
-                    "Get Started",
+            else:
+                st.button(
+                    "Sign in",
+                    key=f"signin_btn{'_bd' if backdrop else ''}",
                     type="primary",
                     use_container_width=True,
-                    on_click=_handle_login_submit,
+                    on_click=st.login,
                 )
 
             welcome_error = st.session_state.get("_welcome_error")
@@ -314,6 +373,88 @@ def render_welcome_screen(session, backdrop=False):
                     st.error(welcome_error)
                 else:
                     st.warning(welcome_error)
+
+
+def _inline_loader_html(text: str) -> str:
+    """A spinner for the sign-in card's form area (styles in render_welcome_screen)."""
+    return (
+        '<div class="wl-loading" role="status" aria-live="polite"><div class="wl-spin" aria-hidden="true"></div>'
+        f'<div>{html.escape(text)}</div></div>'
+    )
+
+
+def _run_otp_action(action: dict):
+    """Do the slow part of the sign-in (database + email) while the card shows a spinner, then redraw.
+
+    The buttons' callbacks run before the page is redrawn and only record what was asked, so the card
+    is already back on screen (with this spinner in place of the form) while the work happens.
+    """
+    import otp
+
+    kind, email = action["kind"], action["email"]
+    slot = st.empty()
+    slot.markdown(_inline_loader_html("Checking code…" if kind == "verify" else "Sending code…"), unsafe_allow_html=True)
+    if kind == "verify":
+        token = otp.verify_code(email, action["code"])
+        if token:
+            slot.markdown(_inline_loader_html("Signing you in…"), unsafe_allow_html=True)
+            auth.set_session_cookie(token, otp.session_seconds())   # stores the cookie, then reloads the page
+            st.stop()
+        st.session_state["_otp_error"] = "That code is not right or has expired. Check it, or ask for a new one."
+    else:
+        ok, message = otp.request_code(email)
+        if ok:
+            st.session_state["_otp_email"] = email.strip().lower()
+            st.session_state.pop("_otp_error", None)
+        else:
+            st.session_state["_otp_error"] = message
+    st.rerun()
+
+
+def _render_otp_form():
+    """Sign in by emailed code: ask for the email, then for the 6-digit code that was sent to it."""
+    import otp
+
+    def _send_code():
+        st.session_state["_otp_action"] = {"kind": "send", "email": st.session_state.get("otp_email_input", "")}
+
+    def _check_code():
+        st.session_state["_otp_action"] = {
+            "kind": "verify",
+            "email": st.session_state.get("_otp_email", ""),
+            "code": st.session_state.get("otp_code_input", ""),
+        }
+
+    def _resend_code():
+        st.session_state["_otp_action"] = {"kind": "resend", "email": st.session_state.get("_otp_email", "")}
+
+    def _use_other_email():
+        for key in ("_otp_email", "_otp_error"):
+            st.session_state.pop(key, None)
+
+    action = st.session_state.pop("_otp_action", None)
+    if action:
+        _run_otp_action(action)    # always ends in st.rerun() or st.stop()
+
+    pending_email = st.session_state.get("_otp_email")
+    if not pending_email:
+        with st.form("otp_email_form", border=False):
+            st.text_input("Email", placeholder="you@sonymusic.com", key="otp_email_input")
+            st.form_submit_button("Send code", type="primary", use_container_width=True, on_click=_send_code)
+    else:
+        st.markdown(
+            f'<div class="wl-code-note">Enter the {otp.CODE_DIGITS}-digit code sent to <strong>{html.escape(pending_email)}</strong>.</div>',
+            unsafe_allow_html=True,
+        )
+        with st.form("otp_code_form", border=False):
+            st.text_input("Sign-in code", max_chars=otp.CODE_DIGITS, key="otp_code_input")
+            st.form_submit_button("Sign in", type="primary", use_container_width=True, on_click=_check_code)
+        col_resend, col_other = st.columns(2)
+        col_resend.button("Send a new code", key="otp_resend", on_click=_resend_code)
+        col_other.button("Use a different email", key="otp_other", on_click=_use_other_email)
+    error = st.session_state.get("_otp_error")
+    if error:
+        st.error(error)
 
 
 def _logo_b64():
@@ -339,6 +480,10 @@ def render_resume_screen(session, backdrop=False):
         for key in list(st.query_params.keys()):
             if key.startswith("wb_"):
                 del st.query_params[key]
+        if auth.is_oidc():
+            st.logout()   # drops the identity cookie; without it the next run would sign straight back in
+        elif auth.is_otp():
+            st.session_state["_otp_clear_cookie"] = True   # app.py removes the browser cookie on the next run
 
     def _start_new_session():
         st.session_state["_pending_resume_action"] = {"action": "start_new"}

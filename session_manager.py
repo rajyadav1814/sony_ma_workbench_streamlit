@@ -125,6 +125,23 @@ def get_open_sessions(session, email: str, limit: int = 20) -> list[dict]:
         return []
 
 
+def owns_session(session, session_id: str, email: str) -> bool:
+    """True when ``session_id`` is a catalogue session that belongs to ``email``.
+
+    Session ids arrive in the URL, so they are only trusted after this check.
+    """
+    if not session_id or not email or session_id == "local":
+        return False
+    try:
+        rows = session.sql(
+            f"SELECT 1 AS OK FROM {DB}.SESSION_PROGRESS WHERE SESSION_ID = :1 AND USER_EMAIL = :2 LIMIT 1",
+            params=[session_id, email],
+        ).collect()
+        return bool(rows)
+    except Exception:
+        return False
+
+
 def create_new_session(session, email: str) -> dict:
     """Create a fresh IN_PROGRESS session row.
 
@@ -150,6 +167,9 @@ def save_checkpoint(session, session_id: str, new_step: int, step_data: dict) ->
         return False
     new_step = clamp_step(new_step)
     step_data_json = json.dumps(step_data)
+    email = st.session_state.get("user_email", "")
+    if not email:
+        return False
     try:
         # step_data comes from the browser (URL parameter), so it is always bound, never spliced into the SQL.
         session.sql(
@@ -157,10 +177,9 @@ def save_checkpoint(session, session_id: str, new_step: int, step_data: dict) ->
                 SET CURRENT_STEP = {new_step},
                     STEP_DATA = PARSE_JSON(:1),
                     UPDATED_AT = CURRENT_TIMESTAMP()
-                WHERE SESSION_ID = :2 AND STATUS = 'IN_PROGRESS'""",
-            params=[step_data_json, session_id],
+                WHERE SESSION_ID = :2 AND USER_EMAIL = :3 AND STATUS = 'IN_PROGRESS'""",
+            params=[step_data_json, session_id, email],
         ).collect()
-        email = st.session_state.get("user_email", "")
         if email:
             visited_json = json.dumps(list(range(1, new_step + 1)))
             session.sql(
@@ -186,8 +205,8 @@ def complete_session(session, session_id: str) -> bool:
         session.sql(
             f"""UPDATE {DB}.SESSION_PROGRESS
                 SET STATUS = 'COMPLETED', UPDATED_AT = CURRENT_TIMESTAMP()
-                WHERE SESSION_ID = :1""",
-            params=[session_id],
+                WHERE SESSION_ID = :1 AND USER_EMAIL = :2""",
+            params=[session_id, st.session_state.get("user_email", "")],
         ).collect()
         return True
     except Exception:
@@ -196,12 +215,13 @@ def complete_session(session, session_id: str) -> bool:
 
 def delete_session(session, session_id: str) -> bool:
     """Remove a session's row from SESSION_PROGRESS (used by the resume screen's Remove)."""
-    if not session_id or session_id == "local":
+    email = st.session_state.get("user_email", "")
+    if not session_id or session_id == "local" or not email:
         return False
     try:
         session.sql(
-            f"DELETE FROM {DB}.SESSION_PROGRESS WHERE SESSION_ID = :1",
-            params=[session_id],
+            f"DELETE FROM {DB}.SESSION_PROGRESS WHERE SESSION_ID = :1 AND USER_EMAIL = :2",
+            params=[session_id, email],
         ).collect()
         return True
     except Exception as e:
