@@ -141,12 +141,13 @@ def search_artists_dropdown(_conn, term: str) -> list[str]:
         session = _conn.session()
         like_pattern = f"%{term.strip()}%"
         rows = session.sql(
-            f"""SELECT DISTINCT DISPLAY_ARTIST
+            f"""SELECT DISPLAY_ARTIST
                 FROM {LUMINATE_VIEW}
                 WHERE DISPLAY_ARTIST ILIKE :1
+                GROUP BY DISPLAY_ARTIST
                 ORDER BY CASE WHEN TRIM(DISPLAY_ARTIST) ILIKE :2 THEN 0 ELSE 1 END,
                          LENGTH(DISPLAY_ARTIST) ASC, DISPLAY_ARTIST DESC
-                LIMIT 1""",
+                LIMIT 10""",
             params=[like_pattern, term.strip()],
         ).collect()
         if rows:
@@ -164,12 +165,13 @@ def search_labels_dropdown(_conn, term: str) -> list[str]:
         session = _conn.session()
         like_pattern = f"%{term.strip()}%"
         rows = session.sql(
-            f"""SELECT DISTINCT IMPRINT
+            f"""SELECT IMPRINT
                 FROM {LUMINATE_VIEW}
                 WHERE IMPRINT ILIKE :1
+                GROUP BY IMPRINT
                 ORDER BY CASE WHEN TRIM(IMPRINT) ILIKE :2 THEN 0 ELSE 1 END,
                          LENGTH(IMPRINT) ASC, IMPRINT ASC
-                LIMIT 1""",
+                LIMIT 10""",
             params=[like_pattern, term.strip()],
         ).collect()
         if rows:

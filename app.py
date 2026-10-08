@@ -26,7 +26,7 @@ from session_manager import (
 )
 from data_loader import load_data_from_postgres, search_catalog, ensure_isrc_temp_table, compute_analytics_from_monthly_detail, invalidate_analytics
 from build_progress import NULL_PROGRESS, BuildProgress
-from catalog_builder import create_step1_selection_table, create_catalog_table, create_step2_table, _make_table_name, pull_monthly_detail
+from catalog_builder import create_step1_selection_table, create_catalog_table, create_step2_table, drop_session_tables, _make_table_name, pull_monthly_detail
 from postgres_connection import get_connection
 
 # ─── Page config ─────────────────────────────────────────────────────────────
@@ -279,6 +279,30 @@ APP_DIR = Path(__file__).resolve().parent
 EMPTY_TERRITORIES = {"countries": [], "codes": {}, "regions": {}, "default_local": []}
 
 
+def _js_json(value) -> str:
+    """JSON for embedding in an inline <script>.
+
+    Plain json.dumps leaves "</script>" and "<!--" intact, so a value that came from the URL or the
+    database (search term, album title, ...) could close the script tag and inject markup.
+    """
+    return (
+        json.dumps(value, default=str)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
+def _int_param(value, default: int) -> int:
+    """An integer query parameter, or ``default`` when it is missing or not a whole number."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def _read_html(filename: str) -> str:
     return (APP_DIR / "html" / filename).read_text(encoding="utf-8")
 
@@ -297,9 +321,9 @@ def _step_loader_html(title: str, step: int, completed_steps: list) -> str:
         _read_html("head_xlsx_shim.html"),
         "<script>",
         f"window.__SHELL_STEP__ = {int(step)};",
-        f"window.__SHELL_DONE__ = {json.dumps(completed_steps)};",
-        f"window.__SHELL_LABEL__ = {json.dumps(title)};",
-        f"window.__USER_EMAIL__ = {json.dumps(st.session_state.get('user_email', '') or _params.get('wb_email', ''))};",
+        f"window.__SHELL_DONE__ = {_js_json(completed_steps)};",
+        f"window.__SHELL_LABEL__ = {_js_json(title)};",
+        f"window.__USER_EMAIL__ = {_js_json(st.session_state.get('user_email', '') or _params.get('wb_email', ''))};",
         "</script>",
         _read_html("screens.html"),
         _read_html("styles.html"),
@@ -473,6 +497,12 @@ if isinstance(_resume_action, dict):
     elif _action == "remove":
         _removed_session_id = _resume_action.get("session_id", "")
         complete_session(session, _removed_session_id)
+        # The catalogue is gone, so its STEP1/STEP2 tables (and cached analysis) go with it.
+        try:
+            for _dropped in drop_session_tables(session, _removed_session_id):
+                invalidate_analytics(_dropped)
+        except Exception as _drop_error:
+            st.warning(f"Catalogue removed, but its tables could not be dropped: {_drop_error}")
         _remaining_sessions = [
             item
             for item in _resume_action.get("pending_sessions", [])
@@ -546,7 +576,7 @@ if "wb_email" in _params and not st.session_state.get("user_email"):
 if "wb_session_id" in _params and "session_id" not in st.session_state:
     st.session_state["session_id"] = _params["wb_session_id"]
 if "wb_step" in _params:
-    st.session_state["current_step"] = clamp_step(int(_params["wb_step"]))
+    st.session_state["current_step"] = clamp_step(_int_param(_params["wb_step"], MIN_STEP))
 
 if st.session_state.pop("_pending_login", False):
     _email = st.session_state.get("user_email", "")
@@ -622,7 +652,7 @@ params = st.query_params
 wb_step_payload = {}
 
 if "wb_step" in params:
-    new_step = clamp_step(int(params["wb_step"]))
+    new_step = clamp_step(_int_param(params["wb_step"], MIN_STEP))
     st.session_state["current_step"] = new_step
     _wb_sd = params.get("wb_step_data", "")
     if _wb_sd:
@@ -663,7 +693,7 @@ wb_isrc_filename = params.get("wb_isrc_filename", "")
 # Most functions use @st.cache_data so subsequent reloads are fast (cache hit).
 with st.container():
     _requested_step = clamp_step(
-        int(params.get("wb_step", st.session_state.get("current_step", MIN_STEP)) or MIN_STEP)
+        _int_param(params.get("wb_step", st.session_state.get("current_step", MIN_STEP)), MIN_STEP)
     )
     _needs_full_data = _requested_step >= 3 or params.get("wb_step2_created") == "1"
     if _needs_full_data:
@@ -719,7 +749,7 @@ with st.container():
     user_email = st.session_state.get("user_email", "")
     catalog_created = False
 
-    current_wb_step = int(params.get("wb_step", "0"))
+    current_wb_step = _int_param(params.get("wb_step", "0"), 0)
     _sid = st.session_state.get("session_id", params.get("wb_session_id", ""))
     _session_step_data = st.session_state.get("step_data", {})
     if not isinstance(_session_step_data, dict):
@@ -859,7 +889,7 @@ with st.container():
 # ─── Assemble HTML workbench ─────────────────────────────────────────────────
 
 
-data_json = json.dumps(injected_data, default=str)
+data_json = _js_json(injected_data)
 current_step = st.session_state.get("current_step", 1)
 
 html_parts = [
@@ -869,9 +899,9 @@ html_parts = [
     f"const DATA = window.__INJECTED_DATA__;",
     f"window.__INITIAL_STEP__ = {current_step};",
     f"window.__CATALOG_CREATED__ = {'true' if catalog_created else 'false'};",
-    f"window.__USER_EMAIL__ = {json.dumps(st.session_state.get('user_email', ''))};",
-    f"window.__SESSION_ID__ = {json.dumps(st.session_state.get('session_id', ''))};",
-    f"window.__STEP_DATA__ = {json.dumps(st.session_state.get('step_data', {}), default=str)};",
+    f"window.__USER_EMAIL__ = {_js_json(st.session_state.get('user_email', ''))};",
+    f"window.__SESSION_ID__ = {_js_json(st.session_state.get('session_id', ''))};",
+    f"window.__STEP_DATA__ = {_js_json(st.session_state.get('step_data', {}))};",
     "</script>",
     _read_html("screens.html"),
     _read_html("styles.html"),

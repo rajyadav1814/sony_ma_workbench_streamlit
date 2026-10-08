@@ -1,6 +1,8 @@
 """Session progress management backed by PostgreSQL."""
 
 import json
+import uuid
+
 import streamlit as st
 from config import DB, MIN_STEP, MAX_STEP, EMAIL_REGEX
 
@@ -55,16 +57,14 @@ def ensure_session_tables(session):
 def get_open_session(session, email: str) -> dict | None:
     """Check for an IN_PROGRESS session for this user."""
     try:
-        # Use literal substitution as Snowpark session.sql() param binding
-        # varies across versions (some need :1, some need ?, some need f-string).
-        safe_email = email.replace("'", "''")
         rows = session.sql(
             f"""SELECT SESSION_ID, CURRENT_STEP,
                        TO_VARCHAR(STEP_DATA) AS STEP_DATA_STR, UPDATED_AT
                 FROM {DB}.SESSION_PROGRESS
-                WHERE USER_EMAIL = '{safe_email}' AND STATUS = 'IN_PROGRESS'
+                WHERE USER_EMAIL = :1 AND STATUS = 'IN_PROGRESS'
                 ORDER BY UPDATED_AT DESC
-                LIMIT 1"""
+                LIMIT 1""",
+            params=[email],
         ).collect()
         if rows:
             row_dict = _row_to_dict(rows[0])
@@ -94,14 +94,14 @@ def get_open_sessions(session, email: str, limit: int = 20) -> list[dict]:
     resume screen should let them pick which one to continue, restart, or remove.
     """
     try:
-        safe_email = email.replace("'", "''")
         rows = session.sql(
             f"""SELECT SESSION_ID, CURRENT_STEP,
                        TO_VARCHAR(STEP_DATA) AS STEP_DATA_STR, UPDATED_AT
                 FROM {DB}.SESSION_PROGRESS
-                WHERE USER_EMAIL = '{safe_email}' AND STATUS = 'IN_PROGRESS'
+                WHERE USER_EMAIL = :1 AND STATUS = 'IN_PROGRESS'
                 ORDER BY UPDATED_AT DESC
-                LIMIT {int(limit)}"""
+                LIMIT {int(limit)}""",
+            params=[email],
         ).collect()
         sessions = []
         for row in rows:
@@ -126,61 +126,53 @@ def get_open_sessions(session, email: str, limit: int = 20) -> list[dict]:
 
 
 def create_new_session(session, email: str) -> dict:
-    """Create a fresh IN_PROGRESS session row."""
+    """Create a fresh IN_PROGRESS session row.
+
+    The id is generated here rather than read back with "latest row for this email", which could
+    return another browser tab's session when two are created at about the same time.
+    """
+    session_id = str(uuid.uuid4())
     try:
-        safe_email = email.replace("'", "''")
         session.sql(
-            f"""INSERT INTO {DB}.SESSION_PROGRESS (USER_EMAIL, STATUS, CURRENT_STEP, STEP_DATA)
-                SELECT '{safe_email}', 'IN_PROGRESS', {MIN_STEP}, PARSE_JSON('{{}}')"""
+            f"""INSERT INTO {DB}.SESSION_PROGRESS (SESSION_ID, USER_EMAIL, STATUS, CURRENT_STEP, STEP_DATA)
+                VALUES (:1, :2, 'IN_PROGRESS', {MIN_STEP}, PARSE_JSON('{{}}'))""",
+            params=[session_id, email],
         ).collect()
-        result = session.sql(
-            f"""SELECT SESSION_ID, CURRENT_STEP
-                FROM {DB}.SESSION_PROGRESS
-                WHERE USER_EMAIL = '{safe_email}' AND STATUS = 'IN_PROGRESS'
-                ORDER BY CREATED_AT DESC LIMIT 1"""
-        ).collect()
-        if result:
-            row = result[0]
-            row_dict = _row_to_dict(row)
-            return {
-                "session_id": str(row_dict["SESSION_ID"]),
-                "current_step": MIN_STEP,
-                "step_data": {},
-            }
+        return {"session_id": session_id, "current_step": MIN_STEP, "step_data": {}}
     except Exception as e:
         st.warning(f"Create session failed: {e}")
     return {"session_id": "local", "current_step": MIN_STEP, "step_data": {}}
 
 
 def save_checkpoint(session, session_id: str, new_step: int, step_data: dict) -> bool:
-    """MERGE current step_data and set CURRENT_STEP."""
+    """Store the step data and set CURRENT_STEP (and the user's overall progress)."""
     if not session_id or session_id == "local":
         return False
     new_step = clamp_step(new_step)
     step_data_json = json.dumps(step_data)
-    safe_sid = session_id.replace("'", "''")
     try:
-        # Use $$ dollar-quoting to avoid JSON escaping issues with single quotes
+        # step_data comes from the browser (URL parameter), so it is always bound, never spliced into the SQL.
         session.sql(
             f"""UPDATE {DB}.SESSION_PROGRESS
                 SET CURRENT_STEP = {new_step},
-                    STEP_DATA = PARSE_JSON($${step_data_json}$$),
+                    STEP_DATA = PARSE_JSON(:1),
                     UPDATED_AT = CURRENT_TIMESTAMP()
-                WHERE SESSION_ID = '{safe_sid}' AND STATUS = 'IN_PROGRESS'"""
+                WHERE SESSION_ID = :2 AND STATUS = 'IN_PROGRESS'""",
+            params=[step_data_json, session_id],
         ).collect()
         email = st.session_state.get("user_email", "")
         if email:
-            safe_email = email.replace("'", "''")
             visited_json = json.dumps(list(range(1, new_step + 1)))
             session.sql(
                 f"""MERGE INTO {DB}.USER_PROGRESS t
-                    USING (SELECT '{safe_email}' AS USER_EMAIL) s ON t.USER_EMAIL = s.USER_EMAIL
+                    USING (SELECT CAST(:1 AS VARCHAR) AS USER_EMAIL) s ON t.USER_EMAIL = s.USER_EMAIL
                     WHEN MATCHED THEN UPDATE SET
                         CURRENT_STEP = {new_step},
-                        VISITED_STEPS = $${visited_json}$$,
+                        VISITED_STEPS = :2,
                         LAST_UPDATED = CURRENT_TIMESTAMP()
                     WHEN NOT MATCHED THEN INSERT (USER_EMAIL, CURRENT_STEP, VISITED_STEPS)
-                        VALUES ('{safe_email}', {new_step}, $${visited_json}$$)"""
+                        VALUES (:1, {new_step}, :2)""",
+                params=[email, visited_json],
             ).collect()
         return True
     except Exception as e:
@@ -191,11 +183,11 @@ def save_checkpoint(session, session_id: str, new_step: int, step_data: dict) ->
 def complete_session(session, session_id: str) -> bool:
     """Mark a session as COMPLETED."""
     try:
-        safe_sid = session_id.replace("'", "''")
         session.sql(
             f"""UPDATE {DB}.SESSION_PROGRESS
                 SET STATUS = 'COMPLETED', UPDATED_AT = CURRENT_TIMESTAMP()
-                WHERE SESSION_ID = '{safe_sid}'"""
+                WHERE SESSION_ID = :1""",
+            params=[session_id],
         ).collect()
         return True
     except Exception:
@@ -205,11 +197,11 @@ def complete_session(session, session_id: str) -> bool:
 def abandon_open_sessions(session, email: str) -> None:
     """Mark all prior IN_PROGRESS sessions as COMPLETED."""
     try:
-        safe_email = email.replace("'", "''")
         session.sql(
             f"""UPDATE {DB}.SESSION_PROGRESS
                 SET STATUS = 'COMPLETED', UPDATED_AT = CURRENT_TIMESTAMP()
-                WHERE USER_EMAIL = '{safe_email}' AND STATUS = 'IN_PROGRESS'"""
+                WHERE USER_EMAIL = :1 AND STATUS = 'IN_PROGRESS'""",
+            params=[email],
         ).collect()
     except Exception:
         pass

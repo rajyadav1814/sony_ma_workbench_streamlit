@@ -20,10 +20,13 @@ except ModuleNotFoundError:
     pass
 
 
-_POSITIONAL_PARAMETER = re.compile(r":([1-9][0-9]*)")
-_REPLACE_TABLE_NAME = re.compile(r"CREATE\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)", re.IGNORECASE)
+# Not preceded by ":" or a word character, so a "::1" cast or a "12:30" literal is not taken for a parameter.
+_POSITIONAL_PARAMETER = re.compile(r"(?<![:\w]):([1-9][0-9]*)")
+# "CREATE TABLE IF NOT EXISTS x" must not be read as a CREATE OR REPLACE (which drops the table first).
+_REPLACE_TABLE_NAME = re.compile(r"CREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS\b)([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)", re.IGNORECASE)
 _PARSE_JSON_DOLLAR = re.compile(r"PARSE_JSON\(\$\$(.*?)\$\$\)", re.DOTALL | re.IGNORECASE)
 _PARSE_JSON_STRING = re.compile(r"PARSE_JSON\(('(?:''|[^'])*')\)", re.IGNORECASE)
+_PARSE_JSON_PARAM = re.compile(r"PARSE_JSON\((:[1-9][0-9]*)\)", re.IGNORECASE)
 
 
 def _translate_sql(sql: str) -> str:
@@ -59,12 +62,19 @@ def _translate_sql(sql: str) -> str:
 
     sql = _PARSE_JSON_DOLLAR.sub(dollar_json, sql)
     sql = _PARSE_JSON_STRING.sub(r"\1::jsonb", sql)
+    sql = _PARSE_JSON_PARAM.sub(r"\1::jsonb", sql)
     return sql
 
 
-def _parameters(sql: str, params: list[Any] | tuple[Any, ...] | None) -> tuple[str, list[Any]]:
+def _parameters(sql: str, params: list[Any] | tuple[Any, ...] | None) -> tuple[str, list[Any] | None]:
+    """Turn ``:1``-style markers into psycopg ``%s`` placeholders.
+
+    psycopg treats ``%`` in the SQL text as a placeholder whenever a parameter list is passed (even an
+    empty one), so a literal ``%`` (e.g. ``LIKE '%x%'``) is doubled, or the list is dropped when there
+    are no parameters at all.
+    """
     if not params:
-        return sql, []
+        return sql, None
 
     values = list(params)
 
@@ -76,7 +86,7 @@ def _parameters(sql: str, params: list[Any] | tuple[Any, ...] | None) -> tuple[s
         return "%s"
 
     expanded: list[Any] = []
-    return _POSITIONAL_PARAMETER.sub(replace, sql), expanded
+    return _POSITIONAL_PARAMETER.sub(replace, sql.replace("%", "%%")), expanded
 
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?")

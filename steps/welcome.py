@@ -1,6 +1,7 @@
 """Welcome and Resume screens rendered in Streamlit (before the HTML workbench)."""
 
 import base64
+import html
 import json
 from pathlib import Path
 
@@ -673,20 +674,20 @@ def render_resume_screen(session, backdrop=False):
         )
 
     def _pills_html(current_step: int) -> str:
-        html = ""
+        pills = ""
         for i, label in enumerate(STEP_LABELS):
             step_num = i + 1
             if step_num < current_step:
-                html += (
+                pills += (
                     f'<span class="step-pill completed">'
                     f'&#10003; {step_num} &middot; {label}'
                     f'</span>'
                 )
             elif step_num == current_step:
-                html += f'<span class="step-pill current">{step_num} &middot; {label}</span>'
+                pills += f'<span class="step-pill current">{step_num} &middot; {label}</span>'
             else:
-                html += f'<span class="step-pill future">{step_num} &middot; {label}</span>'
-        return html
+                pills += f'<span class="step-pill future">{step_num} &middot; {label}</span>'
+        return pills
 
     # ─── Top bar ─────────────────────────────────────────────────────────────
     # Load Sony Music logo as base64 for inline display
@@ -790,6 +791,10 @@ def render_resume_screen(session, backdrop=False):
                 updated_label = str(raw_updated)
         else:
             updated_label = "Date unavailable"
+        # The search term was typed in the browser and is stored with the session: never trust it as markup.
+        display_name = html.escape(display_name)
+        initials = html.escape(initials)
+        updated_label = html.escape(updated_label)
         sid = pending["session_id"]
         catalog_card = st.container(border=True)
         catalog_card.markdown('<span class="catalog-card-marker" style="display:none"></span>', unsafe_allow_html=True)

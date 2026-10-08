@@ -69,6 +69,31 @@ def _make_table_name(step: int, user_email: str, entity_name: str, session_id: s
     return f"{prefix}_{entity_part}_{user_part}_{unique}"[:PG_IDENTIFIER_LIMIT]
 
 
+def drop_session_tables(session, session_id: str) -> list[str]:
+    """Drop the STEP1_/STEP2_ tables built for one catalogue session; returns the names dropped.
+
+    Tables are named STEP{n}_{entity}_{user}_{session}, with the session part always last (see
+    _make_table_name), so they are found by that suffix. Only tables in the app schema whose name is
+    exactly STEP1_/STEP2_ ... _{session} are touched.
+    """
+    unique = _sanitize_identifier(session_id.replace("-", "")) if session_id else ""
+    if session_id == "local" or len(unique) < 8 or unique == "UNKNOWN":
+        return []    # no real session id: never match anything
+    pattern = re.compile(rf"^step[12]_.+_{re.escape(unique.lower())}$")
+    rows = session.sql(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_schema = :1 AND table_type = 'BASE TABLE' AND table_name LIKE 'step%'",
+        params=[DB.lower()],
+    ).collect()
+    dropped = []
+    for row in rows:
+        name = _upper_keys(row)["TABLE_NAME"]
+        if pattern.match(name) and re.fullmatch(r"[a-z0-9_]+", name):
+            session.sql(f'DROP TABLE IF EXISTS {DB}."{name}"').collect()
+            dropped.append(f"{DB}.{name.upper()}")
+    return dropped
+
+
 def get_step2_table_name(user_email: str, entity_name: str, session_id: str = "") -> str:
     """Return the deterministic Step 2 table name for a catalogue session."""
     return f"{DB}.{_make_table_name(2, user_email, entity_name, session_id)}"
