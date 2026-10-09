@@ -49,38 +49,8 @@ def load_data_from_postgres(_conn):
         "database": luminate_status["database"],
     }
 
-    try:
-        rows = _conn.query(f"SELECT * FROM {DB}.TRACKS ORDER BY TRACK_ID")
-        data["tracks"] = [
-            {
-                "track_id": r["TRACK_ID"],
-                "track_name": r["TRACK_NAME"],
-                "isrc": r["ISRC"],
-                "release_year": int(r["RELEASE_YEAR"]),
-                "first_stream_date": str(r["FIRST_STREAM_DATE"]),
-                "content_type": r["CONTENT_TYPE"],
-                "primary_album_id": r["PRIMARY_ALBUM_ID"],
-            }
-            for r in rows
-        ]
-    except Exception:
-        data["tracks"] = []
-
     # albums is populated dynamically from step2 table data (not hardcoded)
     data["albums"] = []
-
-    try:
-        rows = _conn.query(f"SELECT * FROM {DB}.TRACK_ALBUM_BRIDGE ORDER BY TRACK_ID, ALBUM_ID")
-        data["track_album_bridge"] = [
-            {
-                "track_id": r["TRACK_ID"],
-                "album_id": r["ALBUM_ID"],
-                "is_primary": bool(r["IS_PRIMARY"]),
-            }
-            for r in rows
-        ]
-    except Exception:
-        data["track_album_bridge"] = []
 
     # Steps 4-8 data is computed per catalog by analytics.compute_analytics once the STEP2
     # table exists. Until then these are empty (never placeholder numbers).
@@ -106,17 +76,7 @@ def load_data_from_postgres(_conn):
     except Exception:
         pass
 
-    try:
-        rows = _conn.query(f"SELECT NAME FROM {DB}.ARTISTS ORDER BY NAME")
-        artist_names = [r["NAME"] for r in rows]
-        if "catalog_options" not in data or not isinstance(data.get("catalog_options"), dict):
-            data["catalog_options"] = {}
-        data["catalog_options"]["artists"] = artist_names
-    except Exception:
-        pass
-
     # Ensure required keys have defaults so JS never crashes
-    data.setdefault("catalog_options", {"artists": [], "labels": []})
     data.setdefault("territories", {"countries": [], "codes": {}, "regions": {}, "default_local": []})
     data.setdefault("country_stats", [])
     data.setdefault("market_growth", {"artist_growth_pct": 0, "market_growth_pct": None})

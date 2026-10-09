@@ -28,7 +28,7 @@ from session_manager import (
 )
 from data_loader import load_data_from_postgres, search_catalog, ensure_isrc_temp_table, compute_analytics_from_monthly_detail, invalidate_analytics
 from build_progress import NULL_PROGRESS, BuildProgress
-from catalog_builder import create_step1_selection_table, create_catalog_table, create_step2_table, drop_session_tables, _make_table_name, pull_monthly_detail
+from catalog_builder import create_step1_selection_table, create_step2_table, drop_session_tables, _make_table_name, pull_monthly_detail
 from postgres_connection import get_connection
 from analytics import _TABLE_NAME
 import auth
@@ -752,15 +752,15 @@ with st.container():
         try:
             injected_data = load_data_from_postgres(conn)
         except Exception:
-            injected_data = {"albums": [], "ambiguity_matches": {}, "tracks": [], "track_album_bridge": [],
+            injected_data = {"albums": [], "ambiguity_matches": {},
                              "consumption_matrix": [], "growth_trend": [], "release_year_analysis": [],
-                             "new_release_tracks": [], "catalog_options": {"artists": [], "labels": []},
+                             "new_release_tracks": [],
                              "territories": EMPTY_TERRITORIES}
     else:
         injected_data = {
-            "albums": [], "ambiguity_matches": {}, "tracks": [], "track_album_bridge": [],
+            "albums": [], "ambiguity_matches": {},
             "consumption_matrix": [], "growth_trend": [], "release_year_analysis": [],
-            "new_release_tracks": [], "catalog_options": {"artists": [], "labels": []},
+            "new_release_tracks": [],
             "territories": EMPTY_TERRITORIES,
         }
 
