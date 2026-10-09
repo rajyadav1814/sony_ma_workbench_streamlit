@@ -278,7 +278,7 @@ def create_isrc_temp_table(_conn, csv_data: bytes, user_email: str, filename: st
     Returns the table name.
     """
     import re
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     def _sanitize(name: str) -> str:
         sanitized = re.sub(r"[^A-Za-z0-9_]", "_", name.strip())
@@ -287,7 +287,7 @@ def create_isrc_temp_table(_conn, csv_data: bytes, user_email: str, filename: st
 
     user_part = _sanitize(user_email.split("@")[0] if "@" in user_email else user_email)
     file_part = _sanitize(filename.rsplit(".", 1)[0] if "." in filename else filename)
-    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     table_name = f"STEP1_{user_part}_{file_part}_{ts}"[:63]
 
     session = _conn.session()

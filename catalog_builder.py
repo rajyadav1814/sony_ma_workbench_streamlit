@@ -1,5 +1,4 @@
 # Catalog table builder — creates tables in PostgreSQL for the M&A valuation platform.
-# Co-authored with CoCo
 """Catalog table builder — creates tables in PostgreSQL.
 
 Naming convention: STEP{N}_{searchterm}_{username}_{sessionid}
@@ -7,7 +6,7 @@ Naming convention: STEP{N}_{searchterm}_{username}_{sessionid}
 
 import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from build_progress import NULL_PROGRESS
 from config import DB, LUMINATE_DATABASE, LUMINATE_SCHEMA
 
@@ -24,7 +23,7 @@ def _batches(items: list, max_ticks: int = MAX_PROGRESS_TICKS, max_size: int = 5
 
 
 def _upper_keys(row) -> dict:
-    """Normalize PostgreSQL and Snowflake result-row column casing."""
+    """Normalize result-row column casing to uppercase keys."""
     if hasattr(row, "as_dict"):
         values = row.as_dict()
     elif hasattr(row, "asDict"):
@@ -58,7 +57,7 @@ def _make_table_name(step: int, user_email: str, entity_name: str, session_id: s
     if session_id:
         unique = _sanitize_identifier(session_id.replace("-", ""))
     else:
-        unique = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        unique = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     prefix = f"STEP{step}"
     budget = PG_IDENTIFIER_LIMIT - len(prefix) - len(unique) - 3     # three separating underscores
     if len(entity_part) + len(user_part) > budget:

@@ -19,6 +19,8 @@ try:
 except ModuleNotFoundError:
     pass
 
+from config import ANALYTICS_DATABASE, ANALYTICS_SCHEMA, LUMINATE_DATABASE, LUMINATE_SCHEMA
+
 
 # Not preceded by ":" or a word character, so a "::1" cast or a "12:30" literal is not taken for a parameter.
 _POSITIONAL_PARAMETER = re.compile(r"(?<![:\w]):([1-9][0-9]*)")
@@ -31,17 +33,13 @@ _PARSE_JSON_PARAM = re.compile(r"PARSE_JSON\((:[1-9][0-9]*)\)", re.IGNORECASE)
 
 def _translate_sql(sql: str) -> str:
     """Translate legacy warehouse SQL into PostgreSQL-compatible SQL."""
-    luminate_database = os.getenv("LUMINATE_DATABASE", "catalogue_valuation")
-    luminate_schema = os.getenv("LUMINATE_SCHEMA", "extract_s")
-    analytics_database = os.getenv("ANALYTICS_DATABASE", "catalogue_valuation")
-    analytics_schema = os.getenv("ANALYTICS_SCHEMA", "lai_app")
     sql = sql.replace(
-        f"{luminate_database}.{luminate_schema}.",
-        f"{luminate_schema}.",
+        f"{LUMINATE_DATABASE}.{LUMINATE_SCHEMA}.",
+        f"{LUMINATE_SCHEMA}.",
     )
     sql = sql.replace(
-        f"{analytics_database}.{analytics_schema}.",
-        f"{analytics_schema}.",
+        f"{ANALYTICS_DATABASE}.{ANALYTICS_SCHEMA}.",
+        f"{ANALYTICS_SCHEMA}.",
     )
     sql = re.sub(r"\bTIMESTAMP_NTZ\b", "TIMESTAMP", sql, flags=re.IGNORECASE)
     sql = re.sub(r"\bNUMBER\b", "NUMERIC", sql, flags=re.IGNORECASE)

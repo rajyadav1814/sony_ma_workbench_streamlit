@@ -44,9 +44,8 @@ In `oidc` and `otp` the user's email comes from the verified identity, never fro
 ## Notes
 
 - All figures are illustrative dummy data, generated for UI review only.
-- The embedded iframe is rendered at a fixed height (2400px) with its own
-  scrollbar enabled, so nothing is clipped even on the longer screens
-  (Metadata Review, New Release Forecasting). Adjust the `height=` argument
-  in `app.py` if you want a taller or shorter initial viewport.
+- The embedded iframe is rendered at a fixed height (900px) with its own
+  scrollbar enabled, so nothing is clipped even on the longer screens. Adjust
+  the `height=` argument in `app.py` if you want a taller or shorter initial viewport.
 - To update the app itself, edit the partials in `html/` (most behaviour lives in
   `html/workbench_scripts.html`).

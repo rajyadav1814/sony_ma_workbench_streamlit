@@ -16,7 +16,7 @@ def clamp_step(step: int) -> int:
 
 
 def _row_to_dict(row) -> dict:
-    """Normalize Snowflake and PostgreSQL result rows to uppercase keys."""
+    """Normalize result rows to uppercase keys."""
     if hasattr(row, "as_dict"):
         raw = row.as_dict()
     elif hasattr(row, "asDict"):
