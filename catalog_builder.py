@@ -94,11 +94,6 @@ def drop_session_tables(session, session_id: str) -> list[str]:
     return dropped
 
 
-def get_step2_table_name(user_email: str, entity_name: str, session_id: str = "") -> str:
-    """Return the deterministic Step 2 table name for a catalogue session."""
-    return f"{DB}.{_make_table_name(2, user_email, entity_name, session_id)}"
-
-
 def create_step1_selection_table(session, entity_name: str, user_email: str, selected_entities: list, search_mode: str = "Artist", session_id: str = "", progress=NULL_PROGRESS, isrc_table: str | None = None) -> dict:
     """Store the user's selected ambiguity entities into STEP1_{searchterm}_{username}_{sessionid}.
 
@@ -247,56 +242,3 @@ def create_step2_table(session, step1_table: str, confirmed_mrelg_ids: list, use
     count = _upper_keys(session.sql(f"SELECT COUNT(*) AS CNT FROM {fqn}").collect()[0])["CNT"]
     progress.note(f"{int(count):,} releases loaded")
     return fqn
-
-
-def pull_monthly_detail(session, step2_table: str):
-    """Step 2 → Step 3: query monthly streaming detail for confirmed releases.
-
-    Uses artist names from the step2 table to find all matching recordings
-    in VW_MUSICAL_RECORDING_DS, then pulls their streaming data from
-    MONTHLY_MR_SUMMARY. This approach works even when PRODUCT_CATALOG
-    has sparse release_group mappings.
-    Returns a Snowpark DataFrame (no table is created).
-    """
-    luminate_fqn = f"{LUMINATE_DATABASE}.{LUMINATE_SCHEMA}"
-    models_fqn = f"{LUMINATE_DATABASE}.{LUMINATE_SCHEMA}"
-
-    return session.sql(
-        f"""WITH matched_recordings AS (
-                SELECT rec.MR_ID, rec.DISPLAY_ARTIST, rec.TITLE, rec.RELEASE_DATE
-                FROM {luminate_fqn}.VW_MUSICAL_RECORDING_DS rec
-                JOIN (
-                    SELECT DISTINCT LOWER(DISPLAY_ARTIST) AS ARTIST_KEY
-                    FROM {step2_table}
-                ) artists
-                    ON LOWER(rec.DISPLAY_ARTIST) = artists.ARTIST_KEY
-            ),
-            step2_lookup AS (
-                SELECT DISTINCT MRELG_ID, DISPLAY_ARTIST
-                FROM {step2_table}
-            )
-            SELECT
-                mr.MONTH_START_DATE,
-                mr.COUNTRY_CODE,
-                mr.COMMERCIAL_MODEL,
-                m.DISPLAY_ARTIST AS RELEASE_GROUP_DISPLAY_ARTIST,
-                COALESCE(pc.RELEASE_GROUP_ID, s2.MRELG_ID) AS RELEASE_GROUP_ID,
-                COALESCE(pc.RELEASE_GROUP_TITLE, m.TITLE) AS RELEASE_GROUP_TITLE,
-                m.RELEASE_DATE AS FIRST_STREAM_DATE,
-                mr.MR_ID AS RECORDING_ID,
-                m.TITLE AS RECORDING_TITLE,
-                mr.CONTENT_TYPE,
-                SUM(mr.QUANTITY) AS QUANTITY
-            FROM {models_fqn}.MONTHLY_MR_SUMMARY mr
-            JOIN matched_recordings m
-                ON m.MR_ID = mr.MR_ID
-            LEFT JOIN {models_fqn}.PRODUCT_CATALOG pc
-                ON pc.RECORDING_ID = mr.MR_ID
-            CROSS JOIN (
-                SELECT DISTINCT MRELG_ID
-                FROM step2_lookup
-                LIMIT 1
-            ) s2
-            WHERE mr.MONTH_START_DATE >= '2020-01-01'
-            GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10"""
-    ).collect()

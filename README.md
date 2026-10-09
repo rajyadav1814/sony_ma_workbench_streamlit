@@ -1,20 +1,17 @@
 # Sony Music — M&A Catalog Valuation Workbench (Streamlit + PostgreSQL)
 
-The actual application — all 8 screens, dark/light theme, custom SVG charts,
-and the Excel export — is a single self-contained file, **`workbench.html`**
-(pure HTML/CSS/JS, no frameworks, no Streamlit, no build step). It works on
-its own if you just double-click it.
-
-**`app.py`** is a thin Streamlit shell whose only job is to serve that file
-full-bleed inside the page via `st.components.v1.html(...)`. It uses the
-PostgreSQL database configured by `DATABASE_URL` for catalog and session data.
+The application is a Streamlit shell (**`app.py`**) that assembles the `html/` partials
+(styles, screens, `workbench_scripts.html`) into one page and serves it full-bleed inside the
+page via `st.components.v1.html(...)`. It uses the PostgreSQL database configured by
+`DATABASE_URL` for catalog and session data.
 
 ```
 sony_ma_workbench_streamlit/
-├── app.py              # Streamlit shell — embeds workbench.html in an iframe
-├── workbench.html       # The real app: all 8 screens, self-contained
-├── requirements.txt      # pip deps (local run)
-├── environment.yml       # conda deps
+├── app.py              # Streamlit shell — builds the page from html/ and embeds it in an iframe
+├── html/               # The workbench UI: styles, screens, and workbench_scripts.html
+├── steps/welcome.py    # Login and "Welcome back" screens
+├── requirements.txt    # pip deps (local run)
+├── environment.yml     # conda deps
 └── README.md
 ```
 
@@ -51,8 +48,8 @@ In `oidc` and `otp` the user's email comes from the verified identity, never fro
   scrollbar enabled, so nothing is clipped even on the longer screens
   (Metadata Review, New Release Forecasting). Adjust the `height=` argument
   in `app.py` if you want a taller or shorter initial viewport.
-- To update the app itself, edit `workbench.html` directly — it's a normal
-  static file, no Python changes needed.
+- To update the app itself, edit the partials in `html/` (most behaviour lives in
+  `html/workbench_scripts.html`).
 
 ---
 

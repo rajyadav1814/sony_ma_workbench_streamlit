@@ -2,7 +2,6 @@
 
 import base64
 import html
-import json
 from pathlib import Path
 
 import streamlit as st

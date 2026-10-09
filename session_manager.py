@@ -54,38 +54,6 @@ def ensure_session_tables(session):
         pass
 
 
-def get_open_session(session, email: str) -> dict | None:
-    """Check for an IN_PROGRESS session for this user."""
-    try:
-        rows = session.sql(
-            f"""SELECT SESSION_ID, CURRENT_STEP,
-                       TO_VARCHAR(STEP_DATA) AS STEP_DATA_STR, UPDATED_AT
-                FROM {DB}.SESSION_PROGRESS
-                WHERE USER_EMAIL = :1 AND STATUS = 'IN_PROGRESS'
-                ORDER BY UPDATED_AT DESC
-                LIMIT 1""",
-            params=[email],
-        ).collect()
-        if rows:
-            row_dict = _row_to_dict(rows[0])
-            step_data_raw = row_dict.get("STEP_DATA_STR") or row_dict.get("STEP_DATA")
-            step_data = {}
-            if step_data_raw:
-                try:
-                    step_data = json.loads(str(step_data_raw))
-                except (json.JSONDecodeError, TypeError):
-                    step_data = {}
-            return {
-                "session_id": str(row_dict["SESSION_ID"]),
-                "current_step": clamp_step(int(row_dict["CURRENT_STEP"])),
-                "step_data": step_data if isinstance(step_data, dict) else {},
-                "updated_at": str(row_dict["UPDATED_AT"]),
-            }
-    except Exception as e:
-        st.warning(f"Session lookup failed: {e}")
-    return None
-
-
 def get_open_sessions(session, email: str, limit: int = 20) -> list[dict]:
     """Return ALL IN_PROGRESS sessions for this user (most recently updated first).
 
@@ -227,16 +195,3 @@ def delete_session(session, session_id: str) -> bool:
     except Exception as e:
         st.warning(f"Remove session failed: {e}")
         return False
-
-
-def abandon_open_sessions(session, email: str) -> None:
-    """Mark all prior IN_PROGRESS sessions as COMPLETED."""
-    try:
-        session.sql(
-            f"""UPDATE {DB}.SESSION_PROGRESS
-                SET STATUS = 'COMPLETED', UPDATED_AT = CURRENT_TIMESTAMP()
-                WHERE USER_EMAIL = :1 AND STATUS = 'IN_PROGRESS'""",
-            params=[email],
-        ).collect()
-    except Exception:
-        pass

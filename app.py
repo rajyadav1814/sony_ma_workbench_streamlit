@@ -3,7 +3,6 @@ Sony Music — M&A Catalogue Valuation Workbench
 Streamlit host shell: auth gate, data loading, HTML workbench rendering.
 """
 
-import os
 import json
 import base64
 import time
@@ -12,23 +11,21 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-from config import CACHE_TTL_SECONDS, DB, SCHEMA, MAX_STEP, MIN_STEP, STEP_LABELS
+from config import CACHE_TTL_SECONDS, DB, MAX_STEP, MIN_STEP
 from session_manager import (
     is_valid_email,
     clamp_step,
     ensure_session_tables,
-    get_open_session,
     get_open_sessions,
     owns_session,
     create_new_session,
     save_checkpoint,
     complete_session,
     delete_session,
-    abandon_open_sessions,
 )
 from data_loader import load_data_from_postgres, search_catalog, ensure_isrc_temp_table, compute_analytics_from_monthly_detail, invalidate_analytics
 from build_progress import NULL_PROGRESS, BuildProgress
-from catalog_builder import create_step1_selection_table, create_step2_table, drop_session_tables, _make_table_name, pull_monthly_detail
+from catalog_builder import create_step1_selection_table, create_step2_table, drop_session_tables, _make_table_name
 from postgres_connection import get_connection
 from analytics import _TABLE_NAME
 import auth
@@ -956,7 +953,7 @@ html_parts = [
     _read_html("head_xlsx_shim.html"),
     "<script>",
     f"window.__INJECTED_DATA__ = {data_json};",
-    f"const DATA = window.__INJECTED_DATA__;",
+    "const DATA = window.__INJECTED_DATA__;",
     f"window.__INITIAL_STEP__ = {current_step};",
     f"window.__CATALOG_CREATED__ = {'true' if catalog_created else 'false'};",
     f"window.__USER_EMAIL__ = {_js_json(st.session_state.get('user_email', ''))};",

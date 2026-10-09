@@ -5,9 +5,6 @@ import threading
 import time
 import streamlit as st
 from config import (
-    ANALYTICS_DATABASE,
-    ANALYTICS_SCHEMA,
-    COUNTRY_CODE_TO_NAME,
     DB,
     CACHE_TTL_SECONDS,
     LUMINATE_DATABASE,
@@ -92,54 +89,6 @@ def load_data_from_postgres(_conn):
 LUMINATE_VIEW = f"{LUMINATE_DATABASE}.{LUMINATE_SCHEMA}.vw_musical_release_group_ds"
 LUMINATE_SONG_MAP = f"{LUMINATE_DATABASE}.{LUMINATE_SCHEMA}.vw_song_mrelg_map_ds"
 LUMINATE_SONG = f"{LUMINATE_DATABASE}.{LUMINATE_SCHEMA}.vw_song_ds"
-
-def search_artists_dropdown(_conn, term: str) -> list[str]:
-    """Return matching artist names from Luminate for the dropdown (top 10)."""
-    if not term or not term.strip():
-        return []
-    try:
-        session = _conn.session()
-        like_pattern = f"%{term.strip()}%"
-        rows = session.sql(
-            f"""SELECT DISPLAY_ARTIST
-                FROM {LUMINATE_VIEW}
-                WHERE DISPLAY_ARTIST ILIKE :1
-                GROUP BY DISPLAY_ARTIST
-                ORDER BY CASE WHEN TRIM(DISPLAY_ARTIST) ILIKE :2 THEN 0 ELSE 1 END,
-                         LENGTH(DISPLAY_ARTIST) ASC, DISPLAY_ARTIST DESC
-                LIMIT 10""",
-            params=[like_pattern, term.strip()],
-        ).collect()
-        if rows:
-            return [_row_to_dict(row).get("DISPLAY_ARTIST") for row in rows]
-    except Exception:
-        pass
-    return []
-
-
-def search_labels_dropdown(_conn, term: str) -> list[str]:
-    """Return matching label/imprint names from Luminate for the dropdown (top 10)."""
-    if not term or not term.strip():
-        return []
-    try:
-        session = _conn.session()
-        like_pattern = f"%{term.strip()}%"
-        rows = session.sql(
-            f"""SELECT IMPRINT
-                FROM {LUMINATE_VIEW}
-                WHERE IMPRINT ILIKE :1
-                GROUP BY IMPRINT
-                ORDER BY CASE WHEN TRIM(IMPRINT) ILIKE :2 THEN 0 ELSE 1 END,
-                         LENGTH(IMPRINT) ASC, IMPRINT ASC
-                LIMIT 10""",
-            params=[like_pattern, term.strip()],
-        ).collect()
-        if rows:
-            return [_row_to_dict(row).get("IMPRINT") for row in rows]
-    except Exception:
-        pass
-    return []
-
 
 def _build_like_pattern(term: str) -> str:
     """Build a LIKE pattern from a search term: 'bad bunny' → '%bad%bunny%'."""
